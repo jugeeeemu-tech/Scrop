@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
 import { FWLayer } from './components/layers/FWLayer';
@@ -13,6 +13,9 @@ const PORTS = [
 ];
 
 const PROTOCOLS = ['TCP', 'UDP', 'HTTP', 'HTTPS', 'SSH'];
+
+// Animation threshold - switch to stream mode when exceeded
+const MAX_ANIMATING_PACKETS = 5;
 
 interface Packet {
   id: string;
@@ -57,6 +60,23 @@ function App() {
   const [nicActive, setNicActive] = useState(false);
   const [fwActive, setFwActive] = useState(false);
 
+  // Determine streaming ports based on animation count threshold
+  const streamingPorts = useMemo(() => {
+    if (fwToPortPackets.length < MAX_ANIMATING_PACKETS) {
+      return [];
+    }
+    // Count packets per port
+    const portCounts: Record<number, number> = {};
+    fwToPortPackets.forEach((p) => {
+      const port = p.targetPort ?? 0;
+      portCounts[port] = (portCounts[port] || 0) + 1;
+    });
+    // Return ports with 2+ packets (they're getting busy)
+    return Object.entries(portCounts)
+      .filter(([, count]) => count >= 2)
+      .map(([port]) => Number(port));
+  }, [fwToPortPackets]);
+
   useEffect(() => {
     if (!isCapturing) return;
 
@@ -90,7 +110,21 @@ function App() {
         setTimeout(() => {
           setFwActive(true);
           setTimeout(() => setFwActive(false), 300);
-          setFwToPortPackets((prev) => [...prev, packet]);
+
+          // Check if this port is in stream mode - if so, skip individual animation
+          setFwToPortPackets((prev) => {
+            const isStreamMode = prev.length >= MAX_ANIMATING_PACKETS;
+            if (isStreamMode) {
+              // Skip animation, directly add to delivered
+              const targetPort = packet.targetPort ?? 0;
+              setDeliveredPackets((d) => ({
+                ...d,
+                [targetPort]: [...(d[targetPort] || []).slice(-19), packet],
+              }));
+              return prev;
+            }
+            return [...prev, packet];
+          });
         }, 700);
       }
 
@@ -152,6 +186,7 @@ function App() {
           deliveredPackets={deliveredPackets}
           animatingPackets={fwToPortPackets}
           onAnimationComplete={handleFwToPortComplete}
+          streamingPorts={streamingPorts}
         />
 
         {/* Firewall Layer */}

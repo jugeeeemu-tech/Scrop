@@ -1,5 +1,6 @@
 import { Mailbox } from '../port/Mailbox';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
+import { PacketStream } from '../packet/PacketStream';
 import { ScrollHint } from '../common/ScrollHint';
 import { useRef, useState, useEffect, useCallback } from 'react';
 
@@ -23,9 +24,10 @@ interface PortLayerProps {
   deliveredPackets: Record<number, MailboxPacket[]>;
   animatingPackets: MailboxPacket[];
   onAnimationComplete: (packetId: string, targetPort: number) => void;
+  streamingPorts?: number[];
 }
 
-export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimationComplete }: PortLayerProps) {
+export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimationComplete, streamingPorts = [] }: PortLayerProps) {
   const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
   const animationZoneRef = useRef<HTMLDivElement>(null);
   const [mailboxPositions, setMailboxPositions] = useState<number[]>([]);
@@ -71,14 +73,24 @@ export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimati
 
         {/* Animation zone - packets rising from below */}
         <div ref={animationZoneRef} className="relative h-32">
-          {animatingPackets.map((packet) => (
-            <AnimatedPacket
-              key={packet.id}
-              id={packet.id}
-              targetX={mailboxPositions[packet.targetPort || 0] || 0}
-              onComplete={() => onAnimationComplete(packet.id, packet.targetPort || 0)}
+          {/* Stream mode for high-traffic ports */}
+          {streamingPorts.map((portIndex) => (
+            <PacketStream
+              key={`stream-${portIndex}`}
+              targetX={mailboxPositions[portIndex] || 0}
             />
           ))}
+          {/* Individual packet animations for normal traffic */}
+          {animatingPackets
+            .filter((packet) => !streamingPorts.includes(packet.targetPort || 0))
+            .map((packet) => (
+              <AnimatedPacket
+                key={packet.id}
+                id={packet.id}
+                targetX={mailboxPositions[packet.targetPort || 0] || 0}
+                onComplete={() => onAnimationComplete(packet.id, packet.targetPort || 0)}
+              />
+            ))}
         </div>
       </div>
 
