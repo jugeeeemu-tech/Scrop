@@ -23,3 +23,19 @@ export interface Port {
   packetCount: number;
   isActive: boolean;
 }
+
+export interface AnimatingPacket {
+  id: string;
+  protocol: string;
+  size: number;
+  source: string;
+  destination: string;
+  targetPort?: number;
+  timestamp: number;
+  reason?: string;
+}
+
+export interface PortInfo {
+  port: number;
+  label: string;
+}

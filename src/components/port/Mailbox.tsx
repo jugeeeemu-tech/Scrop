@@ -1,20 +1,12 @@
 import { cn } from '../../lib/utils';
 import { Package, X } from 'lucide-react';
 import { useState, forwardRef } from 'react';
-
-interface MailboxPacket {
-  id: string;
-  protocol: string;
-  size: number;
-  source: string;
-  destination: string;
-  timestamp?: number;
-}
+import type { AnimatingPacket } from '../../types';
 
 interface MailboxProps {
   port: number;
   label: string;
-  packets: MailboxPacket[];
+  packets: AnimatingPacket[];
   isActive?: boolean;
   className?: string;
 }

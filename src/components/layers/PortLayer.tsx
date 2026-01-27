@@ -3,26 +3,12 @@ import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { ScrollHint } from '../common/ScrollHint';
 import { useRef, useState, useEffect, useCallback } from 'react';
-
-interface MailboxPacket {
-  id: string;
-  protocol: string;
-  size: number;
-  source: string;
-  destination: string;
-  timestamp?: number;
-  targetPort?: number;
-}
-
-interface PortInfo {
-  port: number;
-  label: string;
-}
+import type { AnimatingPacket, PortInfo } from '../../types';
 
 interface PortLayerProps {
-  ports: PortInfo[];
-  deliveredPackets: Record<number, MailboxPacket[]>;
-  animatingPackets: MailboxPacket[];
+  ports: readonly PortInfo[];
+  deliveredPackets: Record<number, AnimatingPacket[]>;
+  animatingPackets: AnimatingPacket[];
   onAnimationComplete: (packetId: string, targetPort: number) => void;
   streamingPorts?: number[];
 }

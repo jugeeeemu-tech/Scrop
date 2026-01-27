@@ -3,20 +3,12 @@ import { Shield, Cpu, Package } from 'lucide-react';
 import { useState } from 'react';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 import { DropStream } from '../packet/DropStream';
-
-interface DroppedPacket {
-  id: string;
-  protocol: string;
-  size: number;
-  source: string;
-  destination: string;
-  reason?: string;
-}
+import type { AnimatingPacket } from '../../types';
 
 interface DroppedPileProps {
-  packets: DroppedPacket[];
+  packets: AnimatingPacket[];
   type: 'firewall' | 'nic';
-  dropAnimations: DroppedPacket[];
+  dropAnimations: AnimatingPacket[];
   onDropAnimationComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
 }
@@ -105,10 +97,10 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
 
 interface NetworkLayerDeviceProps {
   type: 'firewall' | 'nic';
-  droppedPackets: DroppedPacket[];
+  droppedPackets: AnimatingPacket[];
   isActive?: boolean;
   className?: string;
-  dropAnimations: DroppedPacket[];
+  dropAnimations: AnimatingPacket[];
   onDropAnimationComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
 }
