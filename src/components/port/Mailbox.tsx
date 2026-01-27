@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Package, X } from 'lucide-react';
-import { useState } from 'react';
+import { useState, forwardRef } from 'react';
 
 interface MailboxPacket {
   id: string;
@@ -19,16 +19,19 @@ interface MailboxProps {
   className?: string;
 }
 
-export function Mailbox({ port, label, packets, isActive = false, className }: MailboxProps) {
+export const Mailbox = forwardRef<HTMLDivElement, MailboxProps>(function Mailbox(
+  { port, label, packets, isActive = false, className },
+  ref
+) {
   const [isOpen, setIsOpen] = useState(false);
   const packetCount = packets.length;
 
   return (
-    <>
+    <div ref={ref} className={className}>
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className={cn('relative flex flex-col items-center cursor-pointer group', className)}
+        className="relative flex flex-col items-center cursor-pointer group"
       >
         {/* Mailbox Post */}
         <div className="relative">
@@ -132,6 +135,6 @@ export function Mailbox({ port, label, packets, isActive = false, className }: M
           </div>
         </div>
       )}
-    </>
+    </div>
   );
-}
+});

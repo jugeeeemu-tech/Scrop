@@ -1,45 +1,57 @@
 import { cn } from '../../lib/utils';
 import { Package } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 interface AnimatedPacketProps {
   id: string;
-  targetMailboxIndex: number;
+  targetX: number;
   onComplete: () => void;
 }
 
-export function AnimatedPacket({ targetMailboxIndex, onComplete }: AnimatedPacketProps) {
+export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
   const [phase, setPhase] = useState<'start' | 'rising' | 'delivered'>('start');
+  const mountTime = useRef(Date.now());
+  const completedRef = useRef(false);
 
   useEffect(() => {
-    const riseTimer = setTimeout(() => setPhase('rising'), 50);
-    const deliverTimer = setTimeout(() => {
-      setPhase('delivered');
-      onComplete();
-    }, 1000);
+    let animationFrameId: number;
+
+    const checkPhase = () => {
+      const elapsed = Date.now() - mountTime.current;
+
+      if (elapsed >= 750 && !completedRef.current) {
+        completedRef.current = true;
+        setPhase('delivered');
+        onComplete();
+      } else if (elapsed >= 50) {
+        setPhase('rising');
+        if (!completedRef.current) {
+          animationFrameId = requestAnimationFrame(checkPhase);
+        }
+      } else {
+        animationFrameId = requestAnimationFrame(checkPhase);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(checkPhase);
 
     return () => {
-      clearTimeout(riseTimer);
-      clearTimeout(deliverTimer);
+      cancelAnimationFrame(animationFrameId);
     };
   }, [onComplete]);
-
-  // Calculate horizontal position based on target mailbox (5 mailboxes)
-  const getTranslateX = () => {
-    const positions = [-160, -80, 0, 80, 160];
-    return positions[targetMailboxIndex] || 0;
-  };
 
   return (
     <div
       className={cn(
-        'absolute left-1/2 transition-all duration-700 ease-out z-10',
+        'absolute transition-all ease-out z-10',
+        phase === 'delivered' ? 'duration-200' : 'duration-700',
         phase === 'start' && 'bottom-0 opacity-100',
         phase === 'rising' && 'bottom-full opacity-100',
         phase === 'delivered' && 'bottom-full opacity-0 scale-50'
       )}
       style={{
-        transform: `translateX(calc(-50% + ${getTranslateX()}px))`,
+        left: targetX,
+        transform: 'translateX(-50%)',
       }}
     >
       <div

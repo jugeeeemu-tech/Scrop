@@ -1,6 +1,7 @@
 import { Mailbox } from '../port/Mailbox';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { ScrollHint } from '../common/ScrollHint';
+import { useRef, useState, useEffect, useCallback } from 'react';
 
 interface MailboxPacket {
   id: string;
@@ -25,6 +26,30 @@ interface PortLayerProps {
 }
 
 export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimationComplete }: PortLayerProps) {
+  const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const animationZoneRef = useRef<HTMLDivElement>(null);
+  const [mailboxPositions, setMailboxPositions] = useState<number[]>([]);
+
+  const updateMailboxPositions = useCallback(() => {
+    if (!animationZoneRef.current) return;
+
+    const zoneRect = animationZoneRef.current.getBoundingClientRect();
+    const positions = mailboxRefs.current.map((ref) => {
+      if (!ref) return 0;
+      const rect = ref.getBoundingClientRect();
+      // Calculate mailbox center X relative to animation zone's left edge
+      return rect.left + rect.width / 2 - zoneRect.left;
+    });
+    setMailboxPositions(positions);
+  }, []);
+
+  useEffect(() => {
+    updateMailboxPositions();
+
+    window.addEventListener('resize', updateMailboxPositions);
+    return () => window.removeEventListener('resize', updateMailboxPositions);
+  }, [updateMailboxPositions, ports.length]);
+
   return (
     <section className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
       <div className="flex-1 flex flex-col justify-center max-w-4xl mx-auto w-full">
@@ -33,6 +58,9 @@ export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimati
           {ports.map((portInfo, index) => (
             <Mailbox
               key={portInfo.port}
+              ref={(el) => {
+                mailboxRefs.current[index] = el;
+              }}
               port={portInfo.port}
               label={portInfo.label}
               packets={deliveredPackets[index] || []}
@@ -42,12 +70,12 @@ export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimati
         </div>
 
         {/* Animation zone - packets rising from below */}
-        <div className="relative h-32">
+        <div ref={animationZoneRef} className="relative h-32">
           {animatingPackets.map((packet) => (
             <AnimatedPacket
               key={packet.id}
               id={packet.id}
-              targetMailboxIndex={packet.targetPort || 0}
+              targetX={mailboxPositions[packet.targetPort || 0] || 0}
               onComplete={() => onAnimationComplete(packet.id, packet.targetPort || 0)}
             />
           ))}

@@ -2,6 +2,7 @@ import { NetworkLayerDevice } from './NetworkLayerDevice';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 import { ScrollHint } from '../common/ScrollHint';
+import { useRef, useState, useEffect, useCallback } from 'react';
 
 interface DroppedPacket {
   id: string;
@@ -34,6 +35,21 @@ export function FWLayer({
   onDropAnimationComplete,
   onRisingComplete,
 }: FWLayerProps) {
+  const animationZoneRef = useRef<HTMLDivElement>(null);
+  const [centerX, setCenterX] = useState(0);
+
+  const updateCenterX = useCallback(() => {
+    if (!animationZoneRef.current) return;
+    const rect = animationZoneRef.current.getBoundingClientRect();
+    setCenterX(rect.width / 2);
+  }, []);
+
+  useEffect(() => {
+    updateCenterX();
+    window.addEventListener('resize', updateCenterX);
+    return () => window.removeEventListener('resize', updateCenterX);
+  }, [updateCenterX]);
+
   return (
     <section className="min-h-[60vh] relative bg-muted/30">
       <div className="relative">
@@ -53,12 +69,12 @@ export function FWLayer({
       </div>
 
       {/* Animation zone - packets rising from NIC */}
-      <div className="relative h-24 max-w-4xl mx-auto">
+      <div ref={animationZoneRef} className="relative h-24 max-w-4xl mx-auto">
         {risingPackets.map((packet) => (
           <AnimatedPacket
             key={packet.id}
             id={packet.id}
-            targetMailboxIndex={2}
+            targetX={centerX}
             onComplete={() => onRisingComplete(packet.id)}
           />
         ))}
