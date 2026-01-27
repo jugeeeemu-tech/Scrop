@@ -25,8 +25,8 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete }:
 
   return (
     <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      {/* Drop animations - positioned to land on the pile */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+      {/* Drop animations - positioned at the center of the pile */}
+      <div className="absolute bottom-4 left-4 z-20">
         {dropAnimations.map((packet) => (
           <DroppedPacketAnimation
             key={packet.id}
@@ -44,7 +44,7 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete }:
           <div
             key={packets[packets.length - 5 + index]?.id || index}
             className={cn(
-              'absolute w-10 h-10 rounded-lg border-2 border-destructive bg-destructive/10 flex items-center justify-center',
+              'absolute w-10 h-10 rounded-lg border-2 border-destructive bg-card flex items-center justify-center',
               'transition-all duration-300'
             )}
             style={{
