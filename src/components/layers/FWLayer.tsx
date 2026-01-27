@@ -24,6 +24,7 @@ interface FWLayerProps {
   risingPackets: AnimatingPacket[];
   onDropAnimationComplete: (packetId: string) => void;
   onRisingComplete: (packetId: string) => void;
+  isDropStreamMode?: boolean;
 }
 
 export function FWLayer({
@@ -33,6 +34,7 @@ export function FWLayer({
   risingPackets,
   onDropAnimationComplete,
   onRisingComplete,
+  isDropStreamMode = false,
 }: FWLayerProps) {
   const animationZoneRef = useRef<HTMLDivElement>(null);
   const [centerX, setCenterX] = useState(0);
@@ -58,6 +60,7 @@ export function FWLayer({
           isActive={isActive}
           dropAnimations={dropAnimations}
           onDropAnimationComplete={onDropAnimationComplete}
+          isDropStreamMode={isDropStreamMode}
         />
       </div>
 

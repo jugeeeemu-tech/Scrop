@@ -2,6 +2,7 @@ import { cn } from '../../lib/utils';
 import { Shield, Cpu, Package } from 'lucide-react';
 import { useState } from 'react';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
+import { DropStream } from '../packet/DropStream';
 
 interface DroppedPacket {
   id: string;
@@ -17,9 +18,10 @@ interface DroppedPileProps {
   type: 'firewall' | 'nic';
   dropAnimations: DroppedPacket[];
   onDropAnimationComplete: (packetId: string) => void;
+  isDropStreamMode?: boolean;
 }
 
-function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete }: DroppedPileProps) {
+function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
   const [isHovered, setIsHovered] = useState(false);
   const count = packets.length;
 
@@ -27,14 +29,18 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete }:
     <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
       {/* Drop animations - positioned at the center of the pile */}
       <div className="absolute bottom-4 left-4 z-20">
-        {dropAnimations.map((packet) => (
-          <DroppedPacketAnimation
-            key={packet.id}
-            id={packet.id}
-            direction="right"
-            onComplete={() => onDropAnimationComplete(packet.id)}
-          />
-        ))}
+        {isDropStreamMode ? (
+          <DropStream />
+        ) : (
+          dropAnimations.map((packet) => (
+            <DroppedPacketAnimation
+              key={packet.id}
+              id={packet.id}
+              direction="right"
+              onComplete={() => onDropAnimationComplete(packet.id)}
+            />
+          ))
+        )}
       </div>
 
       {/* Stacked packages visualization - always maintain fixed width */}
@@ -104,9 +110,10 @@ interface NetworkLayerDeviceProps {
   className?: string;
   dropAnimations: DroppedPacket[];
   onDropAnimationComplete: (packetId: string) => void;
+  isDropStreamMode?: boolean;
 }
 
-export function NetworkLayerDevice({ type, droppedPackets, isActive = false, className, dropAnimations, onDropAnimationComplete }: NetworkLayerDeviceProps) {
+export function NetworkLayerDevice({ type, droppedPackets, isActive = false, className, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: NetworkLayerDeviceProps) {
   const isFirewall = type === 'firewall';
 
   return (
@@ -150,6 +157,7 @@ export function NetworkLayerDevice({ type, droppedPackets, isActive = false, cla
           type={type}
           dropAnimations={dropAnimations}
           onDropAnimationComplete={onDropAnimationComplete}
+          isDropStreamMode={isDropStreamMode}
         />
       </div>
     </section>

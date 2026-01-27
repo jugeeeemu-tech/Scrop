@@ -52,6 +52,7 @@ function App() {
   const [nicDropped, setNicDropped] = useState<Packet[]>([]);
 
   // Animation states
+  const [incomingPackets, setIncomingPackets] = useState<Packet[]>([]);
   const [nicToFwPackets, setNicToFwPackets] = useState<Packet[]>([]);
   const [fwToPortPackets, setFwToPortPackets] = useState<Packet[]>([]);
   const [nicDropAnimations, setNicDropAnimations] = useState<Packet[]>([]);
@@ -77,6 +78,10 @@ function App() {
       .map(([port]) => Number(port));
   }, [fwToPortPackets]);
 
+  // Determine drop stream mode for NIC and FW layers
+  const nicDropStreamMode = nicDropAnimations.length >= MAX_ANIMATING_PACKETS;
+  const fwDropStreamMode = fwDropAnimations.length >= MAX_ANIMATING_PACKETS;
+
   useEffect(() => {
     if (!isCapturing) return;
 
@@ -84,55 +89,65 @@ function App() {
       const packet = generatePacket(packetCounter);
       const random = Math.random();
 
-      // Flash NIC active
-      setNicActive(true);
-      setTimeout(() => setNicActive(false), 300);
+      // First, start incoming animation (external -> NIC)
+      setIncomingPackets((prev) => [...prev, packet]);
 
-      if (random < 0.1) {
-        // Dropped at NIC - animate bounce
-        setNicDropAnimations((prev) => [...prev, { ...packet, reason: 'Buffer overflow' }]);
-        setNicDropped((prev) => [...prev.slice(-49), { ...packet, reason: 'Buffer overflow' }]);
-      } else if (random < 0.25) {
-        // Will be dropped at Firewall - first animate NIC to FW
-        setNicToFwPackets((prev) => [...prev, packet]);
+      // After incoming animation completes (700ms), process at NIC
+      setTimeout(() => {
+        // Flash NIC active
+        setNicActive(true);
+        setTimeout(() => setNicActive(false), 300);
 
-        setTimeout(() => {
-          setFwActive(true);
-          setTimeout(() => setFwActive(false), 300);
+        if (random < 0.1) {
+          // Dropped at NIC - animate bounce
+          setNicDropAnimations((prev) => [...prev, { ...packet, reason: 'Buffer overflow' }]);
+          setNicDropped((prev) => [...prev.slice(-49), { ...packet, reason: 'Buffer overflow' }]);
+        } else if (random < 0.25) {
+          // Will be dropped at Firewall - first animate NIC to FW
+          setNicToFwPackets((prev) => [...prev, packet]);
 
-          setFwDropAnimations((prev) => [...prev, { ...packet, reason: 'Blocked by rule' }]);
-          setFirewallDropped((prev) => [...prev.slice(-49), { ...packet, reason: 'Blocked by rule' }]);
-        }, 700);
-      } else {
-        // Delivered successfully - animate through layers
-        setNicToFwPackets((prev) => [...prev, packet]);
+          setTimeout(() => {
+            setFwActive(true);
+            setTimeout(() => setFwActive(false), 300);
 
-        setTimeout(() => {
-          setFwActive(true);
-          setTimeout(() => setFwActive(false), 300);
+            setFwDropAnimations((prev) => [...prev, { ...packet, reason: 'Blocked by rule' }]);
+            setFirewallDropped((prev) => [...prev.slice(-49), { ...packet, reason: 'Blocked by rule' }]);
+          }, 700);
+        } else {
+          // Delivered successfully - animate through layers
+          setNicToFwPackets((prev) => [...prev, packet]);
 
-          // Check if this port is in stream mode - if so, skip individual animation
-          setFwToPortPackets((prev) => {
-            const isStreamMode = prev.length >= MAX_ANIMATING_PACKETS;
-            if (isStreamMode) {
-              // Skip animation, directly add to delivered
-              const targetPort = packet.targetPort ?? 0;
-              setDeliveredPackets((d) => ({
-                ...d,
-                [targetPort]: [...(d[targetPort] || []).slice(-19), packet],
-              }));
-              return prev;
-            }
-            return [...prev, packet];
-          });
-        }, 700);
-      }
+          setTimeout(() => {
+            setFwActive(true);
+            setTimeout(() => setFwActive(false), 300);
+
+            // Check if this port is in stream mode - if so, skip individual animation
+            setFwToPortPackets((prev) => {
+              const isStreamMode = prev.length >= MAX_ANIMATING_PACKETS;
+              if (isStreamMode) {
+                // Skip animation, directly add to delivered
+                const targetPort = packet.targetPort ?? 0;
+                setDeliveredPackets((d) => ({
+                  ...d,
+                  [targetPort]: [...(d[targetPort] || []).slice(-19), packet],
+                }));
+                return prev;
+              }
+              return [...prev, packet];
+            });
+          }, 700);
+        }
+      }, 700);
 
       setPacketCounter((prev) => prev + 1);
     }, 2000);
 
     return () => clearInterval(interval);
   }, [isCapturing, packetCounter]);
+
+  const handleIncomingComplete = useCallback((packetId: string) => {
+    setIncomingPackets((prev) => prev.filter((p) => p.id !== packetId));
+  }, []);
 
   const handleNicToFwComplete = useCallback((packetId: string) => {
     setNicToFwPackets((prev) => prev.filter((p) => p.id !== packetId));
@@ -164,6 +179,7 @@ function App() {
     setFirewallDropped([]);
     setNicDropped([]);
     setPacketCounter(0);
+    setIncomingPackets([]);
     setNicToFwPackets([]);
     setFwToPortPackets([]);
     setNicDropAnimations([]);
@@ -197,6 +213,7 @@ function App() {
           risingPackets={nicToFwPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'fw')}
           onRisingComplete={handleNicToFwComplete}
+          isDropStreamMode={fwDropStreamMode}
         />
 
         {/* NIC Layer */}
@@ -204,7 +221,10 @@ function App() {
           droppedPackets={nicDropped}
           isActive={nicActive}
           dropAnimations={nicDropAnimations}
+          incomingPackets={incomingPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
+          onIncomingComplete={handleIncomingComplete}
+          isDropStreamMode={nicDropStreamMode}
         />
       </main>
 
