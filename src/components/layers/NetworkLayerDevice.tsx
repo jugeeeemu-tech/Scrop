@@ -1,0 +1,135 @@
+import { cn } from '../../lib/utils';
+import { Shield, Cpu, Package } from 'lucide-react';
+import { useState } from 'react';
+
+interface DroppedPacket {
+  id: string;
+  protocol: string;
+  size: number;
+  source: string;
+  destination: string;
+  reason?: string;
+}
+
+interface DroppedPileProps {
+  packets: DroppedPacket[];
+  type: 'firewall' | 'nic';
+}
+
+function DroppedPile({ packets, type }: DroppedPileProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const count = packets.length;
+
+  if (count === 0) return null;
+
+  return (
+    <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+      {/* Stacked packages visualization */}
+      <div className="relative w-24 h-20 cursor-pointer">
+        {/* Render up to 5 stacked packages */}
+        {packets.slice(-5).map((_, index) => (
+          <div
+            key={packets[packets.length - 5 + index]?.id || index}
+            className={cn(
+              'absolute w-10 h-10 rounded-lg border-2 border-destructive bg-destructive/10 flex items-center justify-center',
+              'transition-all duration-300'
+            )}
+            style={{
+              bottom: `${index * 4}px`,
+              left: `${index * 6}px`,
+              transform: `rotate(${(index - 2) * 5}deg)`,
+              zIndex: index,
+            }}
+          >
+            <Package className="w-5 h-5 text-destructive" />
+          </div>
+        ))}
+
+        {/* Count badge */}
+        <div className="absolute -top-2 -right-2 min-w-6 h-6 px-2 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-medium z-10">
+          {count}
+        </div>
+      </div>
+
+      {/* Hover tooltip with packet details */}
+      {isHovered && (
+        <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
+          <div className="p-3 border-b border-border bg-destructive/5">
+            <p className="text-sm font-medium text-foreground">{type === 'firewall' ? 'Firewall' : 'NIC'} Drops</p>
+            <p className="text-xs text-muted-foreground">{count} packets blocked</p>
+          </div>
+          <div className="max-h-48 overflow-y-auto p-2 space-y-1">
+            {packets
+              .slice()
+              .reverse()
+              .slice(0, 10)
+              .map((packet) => (
+                <div key={packet.id} className="p-2 rounded-lg bg-muted/50 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground">{packet.protocol}</span>
+                    <span className="text-muted-foreground">{packet.size}B</span>
+                  </div>
+                  <p className="text-muted-foreground truncate">
+                    {packet.source} → {packet.destination}
+                  </p>
+                  {packet.reason && <p className="text-destructive mt-1 truncate">{packet.reason}</p>}
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface NetworkLayerDeviceProps {
+  type: 'firewall' | 'nic';
+  droppedPackets: DroppedPacket[];
+  isActive?: boolean;
+  className?: string;
+}
+
+export function NetworkLayerDevice({ type, droppedPackets, isActive = false, className }: NetworkLayerDeviceProps) {
+  const isFirewall = type === 'firewall';
+
+  return (
+    <section className={cn('min-h-[50vh] py-16 px-6 flex items-center justify-center', className)}>
+      <div className="flex items-center gap-12">
+        {/* Main device - mailbox style */}
+        <div className="relative flex flex-col items-center">
+          {/* Flag indicator */}
+          <div className="relative">
+            <div
+              className={cn(
+                'absolute -right-3 top-4 w-3 h-6 rounded-sm transition-all duration-500 origin-bottom',
+                isActive ? 'bg-success rotate-0' : 'bg-muted-foreground/30 -rotate-45'
+              )}
+            />
+
+            {/* Device body - mailbox style */}
+            <div
+              className={cn(
+                'relative w-24 h-20 rounded-t-full rounded-b-lg border-2 transition-all duration-300 flex items-center justify-center',
+                isActive ? 'border-foreground bg-card shadow-lg scale-105' : 'border-border bg-card'
+              )}
+            >
+              {isFirewall ? <Shield className="w-8 h-8 text-foreground/70" /> : <Cpu className="w-8 h-8 text-foreground/70" />}
+            </div>
+
+            {/* Post */}
+            <div className="mx-auto w-4 h-10 bg-foreground/20 rounded-b" />
+          </div>
+
+          {/* Label */}
+          <div className="mt-2 text-center">
+            <p className="text-sm font-medium text-foreground">{isFirewall ? 'Firewall' : 'NIC'}</p>
+            <p className="text-[10px] text-muted-foreground">{isFirewall ? 'iptables/nftables' : 'XDP Layer'}</p>
+          </div>
+        </div>
+
+        {/* Dropped packets pile */}
+        <DroppedPile packets={droppedPackets} type={type} />
+      </div>
+    </section>
+  );
+}

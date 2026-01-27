@@ -1,39 +1,61 @@
-import { LayerContainer } from '../layout/LayerContainer';
-import { PortList } from '../port/PortList';
-import { Packet } from '../packet/Packet';
-import { EmptyState } from '../common/EmptyState';
-import type { Port as PortType, Packet as PacketType } from '../../types';
+import { Mailbox } from '../port/Mailbox';
+import { AnimatedPacket } from '../packet/AnimatedPacket';
+import { ScrollHint } from '../common/ScrollHint';
 
-interface PortLayerProps {
-  ports: PortType[];
-  packets: PacketType[];
+interface MailboxPacket {
+  id: string;
+  protocol: string;
+  size: number;
+  source: string;
+  destination: string;
+  timestamp?: number;
+  targetPort?: number;
 }
 
-export function PortLayer({ ports, packets }: PortLayerProps) {
+interface PortInfo {
+  port: number;
+  label: string;
+}
+
+interface PortLayerProps {
+  ports: PortInfo[];
+  deliveredPackets: Record<number, MailboxPacket[]>;
+  animatingPackets: MailboxPacket[];
+  onAnimationComplete: (packetId: string, targetPort: number) => void;
+}
+
+export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimationComplete }: PortLayerProps) {
   return (
-    <LayerContainer layer="PORT">
-      <div className="space-y-6">
-        <div>
-          <h3 className="text-sm font-medium text-gray-600 mb-3">アクティブなポート</h3>
-          {ports.length > 0 ? (
-            <PortList ports={ports} />
-          ) : (
-            <EmptyState message="アクティブなポートがありません" />
-          )}
+    <section className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
+      <div className="flex-1 flex flex-col justify-center max-w-4xl mx-auto w-full">
+        {/* Mailboxes */}
+        <div className="flex flex-wrap justify-center gap-6 md:gap-10 mb-8">
+          {ports.map((portInfo, index) => (
+            <Mailbox
+              key={portInfo.port}
+              port={portInfo.port}
+              label={portInfo.label}
+              packets={deliveredPackets[index] || []}
+              isActive={animatingPackets.some((p) => p.targetPort === index)}
+            />
+          ))}
         </div>
-        <div>
-          <h3 className="text-sm font-medium text-gray-600 mb-3">受信パケット</h3>
-          {packets.length > 0 ? (
-            <div className="space-y-2">
-              {packets.map((packet) => (
-                <Packet key={packet.id} packet={packet} />
-              ))}
-            </div>
-          ) : (
-            <EmptyState message="パケットがありません" />
-          )}
+
+        {/* Animation zone - packets rising from below */}
+        <div className="relative h-32">
+          {animatingPackets.map((packet) => (
+            <AnimatedPacket
+              key={packet.id}
+              id={packet.id}
+              targetMailboxIndex={packet.targetPort || 0}
+              onComplete={() => onAnimationComplete(packet.id, packet.targetPort || 0)}
+            />
+          ))}
         </div>
       </div>
-    </LayerContainer>
+
+      {/* Scroll hint */}
+      <ScrollHint />
+    </section>
   );
 }
