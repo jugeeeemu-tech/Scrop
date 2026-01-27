@@ -1,6 +1,7 @@
 import { cn } from '../../lib/utils';
 import { Shield, Cpu, Package } from 'lucide-react';
 import { useState } from 'react';
+import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 
 interface DroppedPacket {
   id: string;
@@ -14,20 +15,32 @@ interface DroppedPacket {
 interface DroppedPileProps {
   packets: DroppedPacket[];
   type: 'firewall' | 'nic';
+  dropAnimations: DroppedPacket[];
+  onDropAnimationComplete: (packetId: string) => void;
 }
 
-function DroppedPile({ packets, type }: DroppedPileProps) {
+function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete }: DroppedPileProps) {
   const [isHovered, setIsHovered] = useState(false);
   const count = packets.length;
 
-  if (count === 0) return null;
-
   return (
     <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      {/* Stacked packages visualization */}
+      {/* Drop animations - positioned to land on the pile */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+        {dropAnimations.map((packet) => (
+          <DroppedPacketAnimation
+            key={packet.id}
+            id={packet.id}
+            direction="right"
+            onComplete={() => onDropAnimationComplete(packet.id)}
+          />
+        ))}
+      </div>
+
+      {/* Stacked packages visualization - always maintain fixed width */}
       <div className="relative w-24 h-20 cursor-pointer">
-        {/* Render up to 5 stacked packages */}
-        {packets.slice(-5).map((_, index) => (
+        {/* Render up to 5 stacked packages - only when count > 0 */}
+        {count > 0 && packets.slice(-5).map((_, index) => (
           <div
             key={packets[packets.length - 5 + index]?.id || index}
             className={cn(
@@ -45,14 +58,16 @@ function DroppedPile({ packets, type }: DroppedPileProps) {
           </div>
         ))}
 
-        {/* Count badge */}
-        <div className="absolute -top-2 -right-2 min-w-6 h-6 px-2 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-medium z-10">
-          {count}
-        </div>
+        {/* Count badge - only when count > 0 */}
+        {count > 0 && (
+          <div className="absolute -top-2 -right-2 min-w-6 h-6 px-2 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-medium z-10">
+            {count}
+          </div>
+        )}
       </div>
 
-      {/* Hover tooltip with packet details */}
-      {isHovered && (
+      {/* Hover tooltip with packet details - only when count > 0 */}
+      {isHovered && count > 0 && (
         <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
           <div className="p-3 border-b border-border bg-destructive/5">
             <p className="text-sm font-medium text-foreground">{type === 'firewall' ? 'Firewall' : 'NIC'} Drops</p>
@@ -87,9 +102,11 @@ interface NetworkLayerDeviceProps {
   droppedPackets: DroppedPacket[];
   isActive?: boolean;
   className?: string;
+  dropAnimations: DroppedPacket[];
+  onDropAnimationComplete: (packetId: string) => void;
 }
 
-export function NetworkLayerDevice({ type, droppedPackets, isActive = false, className }: NetworkLayerDeviceProps) {
+export function NetworkLayerDevice({ type, droppedPackets, isActive = false, className, dropAnimations, onDropAnimationComplete }: NetworkLayerDeviceProps) {
   const isFirewall = type === 'firewall';
 
   return (
@@ -128,7 +145,12 @@ export function NetworkLayerDevice({ type, droppedPackets, isActive = false, cla
         </div>
 
         {/* Dropped packets pile */}
-        <DroppedPile packets={droppedPackets} type={type} />
+        <DroppedPile
+          packets={droppedPackets}
+          type={type}
+          dropAnimations={dropAnimations}
+          onDropAnimationComplete={onDropAnimationComplete}
+        />
       </div>
     </section>
   );

@@ -28,10 +28,10 @@ export function DroppedPacketAnimation({ direction, onComplete }: DroppedPacketA
     <div
       className={cn(
         'absolute transition-all duration-500 ease-out',
-        phase === 'start' && 'opacity-100 translate-x-0',
+        phase === 'start' && 'opacity-100 -translate-x-24',
         phase === 'bouncing' &&
-          `opacity-100 ${direction === 'right' ? 'translate-x-32' : '-translate-x-32'} rotate-45`,
-        phase === 'done' && `opacity-0 ${direction === 'right' ? 'translate-x-40' : '-translate-x-40'}`
+          `opacity-100 ${direction === 'right' ? 'translate-x-4' : '-translate-x-4'} rotate-12`,
+        phase === 'done' && `opacity-0 ${direction === 'right' ? 'translate-x-8' : '-translate-x-8'}`
       )}
     >
       <div className="w-10 h-10 bg-destructive rounded-lg shadow-lg flex items-center justify-center">
