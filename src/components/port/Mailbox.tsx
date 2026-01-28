@@ -97,7 +97,7 @@ export function Mailbox({
       </button>
 
       {/* Labels - separate from button for double-click editing */}
-      <div className="mt-2 text-center">
+      <div className="mt-2 text-center w-20 mx-auto">
         {isEtc ? (
           <>
             <p className="text-xs font-medium text-foreground">—</p>

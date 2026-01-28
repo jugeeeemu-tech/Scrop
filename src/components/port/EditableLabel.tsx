@@ -13,6 +13,9 @@ interface EditableLabelProps {
   type?: 'text' | 'number';
 }
 
+const sharedClassName =
+  'block w-full border-b p-0 leading-none text-center';
+
 export function EditableLabel({
   value,
   isEditing,
@@ -36,7 +39,7 @@ export function EditableLabel({
   if (!isEditing) {
     return (
       <p
-        className={cn('cursor-default', className)}
+        className={cn(sharedClassName, 'border-transparent cursor-default', className)}
         onDoubleClick={(e) => {
           e.stopPropagation();
           onDoubleClick();
@@ -51,10 +54,12 @@ export function EditableLabel({
     <input
       ref={inputRef}
       type={type}
+      size={1}
       value={value}
       placeholder={placeholder}
       className={cn(
-        'bg-transparent border-b border-foreground/50 outline-none text-center w-full',
+        sharedClassName,
+        'bg-transparent border-foreground/50 outline-none min-w-0 h-auto font-[inherit] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
         className
       )}
       onChange={(e) => onChange(e.target.value)}
