@@ -18,6 +18,7 @@ import {
   addPort,
   updatePort,
   removePort,
+  reorderPorts,
   setEditing,
   commitEditing,
   clearEditing,
@@ -64,6 +65,7 @@ function App() {
           onCommitEdit={commitEditing}
           onCancelEdit={clearEditing}
           onRemovePort={removePort}
+          onReorderPorts={reorderPorts}
         />
 
         <FWLayer

@@ -4,7 +4,8 @@ import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Reorder, useMotionValue, useTransform } from 'framer-motion';
 import type { AnimatingPacket, PortInfo } from '../../types';
 import { ETC_PORT_KEY, getPortKey } from '../../constants';
 
@@ -24,6 +25,7 @@ interface PortLayerProps {
   onCommitEdit: () => void;
   onCancelEdit: () => void;
   onRemovePort: (index: number) => void;
+  onReorderPorts: (newOrder: PortInfo[]) => void;
 }
 
 interface PositionStore {
@@ -108,6 +110,82 @@ function createPositionStore(
   };
 }
 
+const DELETE_Y_THRESHOLD = 100;
+
+interface DraggableMailboxProps {
+  portInfo: PortInfo;
+  editingKey: string | number;
+  onRemove: () => void;
+  mailboxRef: (el: HTMLDivElement | null) => void;
+  packets: AnimatingPacket[];
+  packetCount: number;
+  isActive: boolean;
+  isEditing: boolean;
+  editingField: 'port' | 'label' | null;
+  onPortChange: (port: number) => void;
+  onLabelChange: (label: string) => void;
+  onStartEdit: (field: 'port' | 'label') => void;
+  onCommitEdit: () => void;
+  onCancelEdit: () => void;
+}
+
+function DraggableMailbox({
+  portInfo,
+  editingKey,
+  onRemove,
+  mailboxRef,
+  ...mailboxProps
+}: DraggableMailboxProps) {
+  const y = useMotionValue(0);
+  const opacity = useTransform(
+    y,
+    [-DELETE_Y_THRESHOLD * 1.5, -DELETE_Y_THRESHOLD, 0, DELETE_Y_THRESHOLD, DELETE_Y_THRESHOLD * 1.5],
+    [0.2, 0.5, 1, 0.5, 0.2]
+  );
+  const wasDragged = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleClickCapture = useCallback((e: React.MouseEvent) => {
+    if (wasDragged.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      wasDragged.current = false;
+    }
+  }, []);
+
+  return (
+    <Reorder.Item
+      key={editingKey}
+      as="div"
+      value={portInfo}
+      drag
+      style={{ y, opacity, position: 'relative' }}
+      animate={{
+        scale: isDragging ? 1.05 : 1,
+        boxShadow: isDragging ? '0 8px 25px rgba(0,0,0,0.15)' : '0 0px 0px rgba(0,0,0,0)',
+      }}
+      transition={{ duration: 0.2 }}
+      onDragStart={() => {
+        wasDragged.current = true;
+        setIsDragging(true);
+      }}
+      onDragEnd={(_, info) => {
+        setIsDragging(false);
+        if (
+          Math.abs(info.offset.y) > DELETE_Y_THRESHOLD ||
+          Math.abs(info.velocity.y) > 500
+        ) {
+          onRemove();
+        }
+      }}
+      onClickCapture={handleClickCapture}
+      className="cursor-grab active:cursor-grabbing"
+    >
+      <Mailbox ref={mailboxRef} portInfo={portInfo} isDraggable {...mailboxProps} />
+    </Reorder.Item>
+  );
+}
+
 export function PortLayer({
   ports,
   deliveredPackets,
@@ -124,6 +202,7 @@ export function PortLayer({
   onCommitEdit,
   onCancelEdit,
   onRemovePort,
+  onReorderPorts,
 }: PortLayerProps) {
   const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
   const animationZoneRef = useRef<HTMLDivElement>(null);
@@ -181,7 +260,9 @@ export function PortLayer({
     setVisibleStreamPorts((prev) => prev.filter((p) => p !== port));
   };
 
-  // Find the etc index to insert AddMailbox before it
+  // Separate draggable ports from etc
+  const draggablePorts = ports.filter((p) => p.type !== 'etc');
+  const etcPort = ports.find((p) => p.type === 'etc');
   const etcIndex = ports.findIndex((p) => p.type === 'etc');
 
   return (
@@ -189,21 +270,26 @@ export function PortLayer({
       <div className="flex-1 flex flex-col justify-center max-w-4xl mx-auto w-full">
         {/* Mailboxes */}
         <div className="flex flex-wrap justify-center gap-6 md:gap-10 mb-8">
-          {ports.map((portInfo, index) => {
-            // Insert AddMailbox before etc
-            const isEtc = portInfo.type === 'etc';
-
-            return (
-              <div key={editingIndex === index
+          <Reorder.Group
+            as="div"
+            axis="x"
+            values={draggablePorts}
+            onReorder={onReorderPorts}
+            style={{ display: 'contents' }}
+          >
+            {draggablePorts.map((portInfo) => {
+              const index = ports.indexOf(portInfo);
+              const editingKey = editingIndex === index
                 ? `editing-${index}`
-                : (portInfo.type === 'port' ? (portInfo.port === 0 ? `new-${index}` : portInfo.port) : 'etc')
-              } className="flex gap-6 md:gap-10">
-                {isEtc && index === etcIndex && (
-                  <AddMailbox onClick={onAddPort} />
-                )}
-                <Mailbox
-                  ref={(el) => setMailboxRef(index, el)}
+                : (portInfo.type === 'port' ? (portInfo.port === 0 ? `new-${index}` : portInfo.port) : 'etc');
+
+              return (
+                <DraggableMailbox
+                  key={editingKey}
+                  editingKey={editingKey}
                   portInfo={portInfo}
+                  mailboxRef={(el) => setMailboxRef(index, el)}
+                  onRemove={() => onRemovePort(index)}
                   packets={deliveredPackets[getPortKey(portInfo)] || []}
                   packetCount={deliveredCounterPerPort[getPortKey(portInfo)] || 0}
                   isActive={
@@ -217,11 +303,27 @@ export function PortLayer({
                   onStartEdit={(field) => onStartEdit(index, field)}
                   onCommitEdit={onCommitEdit}
                   onCancelEdit={onCancelEdit}
-                  onRemove={isEtc ? undefined : () => onRemovePort(index)}
                 />
-              </div>
-            );
-          })}
+              );
+            })}
+          </Reorder.Group>
+          <AddMailbox onClick={onAddPort} />
+          {etcPort && (
+            <Mailbox
+              ref={(el) => setMailboxRef(etcIndex, el)}
+              portInfo={etcPort}
+              packets={deliveredPackets[getPortKey(etcPort)] || []}
+              packetCount={deliveredCounterPerPort[getPortKey(etcPort)] || 0}
+              isActive={
+                animatingPackets.some((p) => p.targetPort === getPortKey(etcPort)) ||
+                streamingPorts.includes(getPortKey(etcPort))
+              }
+              isEditing={false}
+              editingField={null}
+              onCommitEdit={onCommitEdit}
+              onCancelEdit={onCancelEdit}
+            />
+          )}
         </div>
 
         {/* Animation zone - packets rising from below */}

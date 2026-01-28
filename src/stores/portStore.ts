@@ -163,6 +163,17 @@ export function clearEditing(): void {
   emitChange();
 }
 
+/** Reorder ports (etc is always kept at the end) */
+export function reorderPorts(newOrder: PortInfo[]): void {
+  const etc = state.ports.find((p) => p.type === 'etc');
+  if (!etc) return;
+  const filtered = newOrder.filter((p) => p.type !== 'etc');
+  const newPorts = [...filtered, etc];
+  state = { ...state, ports: newPorts, editingIndex: null, editingField: null };
+  savePorts(newPorts);
+  emitChange();
+}
+
 /** Commit editing. If port is still 0, remove it (cancel). */
 export function commitEditing(): void {
   if (state.editingIndex === null) return;

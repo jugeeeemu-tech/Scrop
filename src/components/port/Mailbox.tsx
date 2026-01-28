@@ -1,6 +1,7 @@
 import { cn } from '../../lib/utils';
-import { Package, X } from 'lucide-react';
+import { Package, X, GripVertical } from 'lucide-react';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { EditableLabel } from './EditableLabel';
 import type { AnimatingPacket, PortInfo } from '../../types';
 
@@ -18,7 +19,7 @@ interface MailboxProps {
   onStartEdit?: (field: 'port' | 'label') => void;
   onCommitEdit?: () => void;
   onCancelEdit?: () => void;
-  onRemove?: () => void;
+  isDraggable?: boolean;
 }
 
 export function Mailbox({
@@ -35,32 +36,25 @@ export function Mailbox({
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
-  onRemove,
+  isDraggable = false,
 }: MailboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const isEtc = portInfo.type === 'etc';
 
   return (
     <div ref={ref} className={cn('relative group', className)}>
-      {/* Remove button */}
-      {onRemove && !isEtc && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="absolute -top-1 -left-1 z-10 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:scale-110"
-        >
-          <X className="w-3 h-3" />
-        </button>
+      {/* Drag hint */}
+      {isDraggable && (
+        <div className="absolute -top-1 -left-1 z-10 opacity-0 group-hover:opacity-50 transition-opacity pointer-events-none">
+          <GripVertical className="w-4 h-4 text-muted-foreground" />
+        </div>
       )}
 
       {/* Mailbox body - clickable for modal */}
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="relative flex flex-col items-center cursor-pointer"
+        className="relative flex flex-col items-center"
       >
         <div className="relative">
           {/* Flag indicator */}
@@ -137,8 +131,8 @@ export function Mailbox({
         )}
       </div>
 
-      {/* Packet Detail Modal */}
-      {isOpen && (
+      {/* Packet Detail Modal - portalled to body to avoid Reorder.Item drag capture */}
+      {isOpen && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
@@ -200,7 +194,8 @@ export function Mailbox({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
