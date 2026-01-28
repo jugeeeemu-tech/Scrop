@@ -203,7 +203,10 @@ export function PortLayer({
                   portInfo={portInfo}
                   packets={deliveredPackets[getPortKey(portInfo)] || []}
                   packetCount={deliveredCounterPerPort[getPortKey(portInfo)] || 0}
-                  isActive={animatingPackets.some((p) => p.targetPort === getPortKey(portInfo))}
+                  isActive={
+                    animatingPackets.some((p) => p.targetPort === getPortKey(portInfo)) ||
+                    streamingPorts.includes(getPortKey(portInfo))
+                  }
                   isEditing={editingIndex === index}
                   editingField={editingIndex === index ? editingField : null}
                   onPortChange={(port) => onPortChange(index, port)}
