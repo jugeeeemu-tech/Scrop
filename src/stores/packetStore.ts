@@ -44,6 +44,11 @@ export interface PacketStoreState {
   deliveredCounter: number;
   droppedCounter: number;
 
+  // Per-component cumulative counters
+  nicDroppedCounter: number;
+  fwDroppedCounter: number;
+  deliveredCounterPerPort: Record<number, number>;
+
   // Stored packets
   deliveredPackets: Record<number, AnimatingPacket[]>;
   firewallDropped: AnimatingPacket[];
@@ -107,10 +112,21 @@ function createInitialDeliveredPackets(count: number): Record<number, AnimatingP
   return result;
 }
 
+function createInitialDeliveredCounterPerPort(count: number): Record<number, number> {
+  const result: Record<number, number> = {};
+  for (let i = 0; i < count; i++) {
+    result[i] = 0;
+  }
+  return result;
+}
+
 function createInitialStore(portCount: number): PacketStoreState {
   return {
     deliveredCounter: 0,
     droppedCounter: 0,
+    nicDroppedCounter: 0,
+    fwDroppedCounter: 0,
+    deliveredCounterPerPort: createInitialDeliveredCounterPerPort(portCount),
     deliveredPackets: createInitialDeliveredPackets(portCount),
     firewallDropped: [],
     nicDropped: [],
@@ -247,6 +263,7 @@ function processNIC(packet: AnimatingPacket, result: PacketResult, generation: n
       nicActive: true,
       isNicDropStreamMode: isStreamMode,
       droppedCounter: store.droppedCounter + 1,
+      nicDroppedCounter: store.nicDroppedCounter + 1,
       nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
       ...(isStreamMode ? {} : {
         nicDropAnimations: [...store.nicDropAnimations, packet],
@@ -305,6 +322,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
       fwActive: true,
       isFwDropStreamMode: isStreamMode,
       droppedCounter: store.droppedCounter + 1,
+      fwDroppedCounter: store.fwDroppedCounter + 1,
       firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
       ...(isStreamMode ? {} : {
         fwDropAnimations: [...store.fwDropAnimations, packet],
@@ -327,6 +345,10 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
       ...store,
       fwActive: true,
       deliveredCounter: store.deliveredCounter + 1,
+      deliveredCounterPerPort: {
+        ...store.deliveredCounterPerPort,
+        [port]: (store.deliveredCounterPerPort[port] || 0) + 1,
+      },
       streamingPorts: updatedStreamingPorts,
       deliveredPackets: {
         ...store.deliveredPackets,
@@ -339,6 +361,10 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
       ...store,
       fwActive: true,
       deliveredCounter: store.deliveredCounter + 1,
+      deliveredCounterPerPort: {
+        ...store.deliveredCounterPerPort,
+        [port]: (store.deliveredCounterPerPort[port] || 0) + 1,
+      },
       streamingPorts: updatedStreamingPorts,
       fwToPortPackets: [...store.fwToPortPackets, packet],
     };

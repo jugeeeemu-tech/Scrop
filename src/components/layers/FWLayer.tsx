@@ -3,6 +3,7 @@ import type { AnimatingPacket } from '../../types';
 
 interface FWLayerProps {
   droppedPackets: AnimatingPacket[];
+  droppedCount: number;
   isActive?: boolean;
   dropAnimations: AnimatingPacket[];
   risingPackets: AnimatingPacket[];
@@ -14,6 +15,7 @@ interface FWLayerProps {
 
 export function FWLayer({
   droppedPackets,
+  droppedCount,
   isActive = false,
   dropAnimations,
   risingPackets,
@@ -26,6 +28,7 @@ export function FWLayer({
     <NetworkLayer
       variant="firewall"
       droppedPackets={droppedPackets}
+      droppedCount={droppedCount}
       isActive={isActive}
       dropAnimations={dropAnimations}
       animatingPackets={risingPackets}

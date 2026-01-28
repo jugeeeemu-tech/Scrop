@@ -9,6 +9,7 @@ import type { AnimatingPacket, PortInfo } from '../../types';
 interface PortLayerProps {
   ports: readonly PortInfo[];
   deliveredPackets: Record<number, AnimatingPacket[]>;
+  deliveredCounterPerPort: Record<number, number>;
   animatingPackets: AnimatingPacket[];
   onAnimationComplete: (packetId: string, targetPort: number) => void;
   streamingPorts?: number[];
@@ -97,6 +98,7 @@ function createPositionStore(
 export function PortLayer({
   ports,
   deliveredPackets,
+  deliveredCounterPerPort,
   animatingPackets,
   onAnimationComplete,
   streamingPorts = [],
@@ -149,6 +151,7 @@ export function PortLayer({
               }}
               portInfo={portInfo}
               packets={deliveredPackets[index] || []}
+              packetCount={deliveredCounterPerPort[index] || 0}
               isActive={animatingPackets.some((p) => p.targetPort === index)}
             />
           ))}

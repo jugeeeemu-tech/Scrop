@@ -6,6 +6,7 @@ import type { AnimatingPacket, PortInfo } from '../../types';
 interface MailboxProps {
   portInfo: PortInfo;
   packets: AnimatingPacket[];
+  packetCount: number;
   isActive?: boolean;
   className?: string;
   ref?: React.Ref<HTMLDivElement>;
@@ -14,12 +15,12 @@ interface MailboxProps {
 export function Mailbox({
   portInfo,
   packets,
+  packetCount,
   isActive = false,
   className,
   ref,
 }: MailboxProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const packetCount = packets.length;
 
   return (
     <div ref={ref} className={className}>

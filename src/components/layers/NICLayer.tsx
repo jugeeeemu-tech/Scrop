@@ -3,6 +3,7 @@ import type { AnimatingPacket } from '../../types';
 
 interface NICLayerProps {
   droppedPackets: AnimatingPacket[];
+  droppedCount: number;
   isActive?: boolean;
   dropAnimations: AnimatingPacket[];
   incomingPackets: AnimatingPacket[];
@@ -14,6 +15,7 @@ interface NICLayerProps {
 
 export function NICLayer({
   droppedPackets,
+  droppedCount,
   isActive = false,
   dropAnimations,
   incomingPackets,
@@ -26,6 +28,7 @@ export function NICLayer({
     <NetworkLayer
       variant="nic"
       droppedPackets={droppedPackets}
+      droppedCount={droppedCount}
       isActive={isActive}
       dropAnimations={dropAnimations}
       animatingPackets={incomingPackets}

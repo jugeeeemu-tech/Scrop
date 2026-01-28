@@ -11,6 +11,7 @@ type LayerVariant = 'firewall' | 'nic';
 interface NetworkLayerProps {
   variant: LayerVariant;
   droppedPackets: AnimatingPacket[];
+  droppedCount: number;
   isActive?: boolean;
   dropAnimations: AnimatingPacket[];
   animatingPackets: AnimatingPacket[];
@@ -24,6 +25,7 @@ interface NetworkLayerProps {
 export function NetworkLayer({
   variant,
   droppedPackets,
+  droppedCount,
   isActive = false,
   dropAnimations,
   animatingPackets,
@@ -44,6 +46,7 @@ export function NetworkLayer({
         <NetworkLayerDevice
           type={variant}
           droppedPackets={droppedPackets}
+          droppedCount={droppedCount}
           isActive={isActive}
           dropAnimations={dropAnimations}
           onDropAnimationComplete={onDropAnimationComplete}

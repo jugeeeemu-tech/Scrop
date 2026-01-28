@@ -35,6 +35,7 @@ function App() {
         <PortLayer
           ports={DEFAULT_PORTS}
           deliveredPackets={store.deliveredPackets}
+          deliveredCounterPerPort={store.deliveredCounterPerPort}
           animatingPackets={store.fwToPortPackets}
           onAnimationComplete={handleFwToPortComplete}
           streamingPorts={store.streamingPorts}
@@ -42,6 +43,7 @@ function App() {
 
         <FWLayer
           droppedPackets={store.firewallDropped}
+          droppedCount={store.fwDroppedCounter}
           isActive={store.fwActive}
           dropAnimations={store.fwDropAnimations}
           risingPackets={store.nicToFwPackets}
@@ -53,6 +55,7 @@ function App() {
 
         <NICLayer
           droppedPackets={store.nicDropped}
+          droppedCount={store.nicDroppedCounter}
           isActive={store.nicActive}
           dropAnimations={store.nicDropAnimations}
           incomingPackets={store.incomingPackets}

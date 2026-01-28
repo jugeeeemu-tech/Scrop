@@ -8,15 +8,15 @@ import type { AnimatingPacket } from '../../types';
 
 interface DroppedPileProps {
   packets: AnimatingPacket[];
+  count: number;
   type: 'firewall' | 'nic';
   dropAnimations: AnimatingPacket[];
   onDropAnimationComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
 }
 
-function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
+function DroppedPile({ packets, count, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
   const [isHovered, setIsHovered] = useState(false);
-  const count = packets.length;
 
   return (
     <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
@@ -58,7 +58,7 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
         {/* Count badge - only when count > 0 */}
         {count > 0 && (
           <div className="absolute -top-2 -right-2 min-w-6 h-6 px-2 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-medium z-10">
-            {count}
+            {count > 99 ? '99+' : count}
           </div>
         )}
       </div>
@@ -68,7 +68,7 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
         <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
           <div className="p-3 border-b border-border bg-destructive/5">
             <p className="text-sm font-medium text-foreground">{type === 'firewall' ? 'Firewall' : 'NIC'} Drops</p>
-            <p className="text-xs text-muted-foreground">{count} packets blocked</p>
+            <p className="text-xs text-muted-foreground">{count} packet{count !== 1 ? 's' : ''} blocked</p>
           </div>
           <div className="max-h-48 overflow-y-auto p-2 space-y-1">
             {packets
@@ -97,6 +97,7 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
 interface NetworkLayerDeviceProps {
   type: 'firewall' | 'nic';
   droppedPackets: AnimatingPacket[];
+  droppedCount: number;
   isActive?: boolean;
   className?: string;
   dropAnimations: AnimatingPacket[];
@@ -104,7 +105,7 @@ interface NetworkLayerDeviceProps {
   isDropStreamMode?: boolean;
 }
 
-export function NetworkLayerDevice({ type, droppedPackets, isActive = false, className, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: NetworkLayerDeviceProps) {
+export function NetworkLayerDevice({ type, droppedPackets, droppedCount, isActive = false, className, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: NetworkLayerDeviceProps) {
   const isFirewall = type === 'firewall';
 
   return (
@@ -145,6 +146,7 @@ export function NetworkLayerDevice({ type, droppedPackets, isActive = false, cla
         {/* Dropped packets pile */}
         <DroppedPile
           packets={droppedPackets}
+          count={droppedCount}
           type={type}
           dropAnimations={dropAnimations}
           onDropAnimationComplete={onDropAnimationComplete}
