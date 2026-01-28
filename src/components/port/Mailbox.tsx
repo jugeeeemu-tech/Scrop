@@ -1,11 +1,10 @@
 import { cn } from '../../lib/utils';
 import { Package, X } from 'lucide-react';
 import { useState } from 'react';
-import type { AnimatingPacket } from '../../types';
+import type { AnimatingPacket, PortInfo } from '../../types';
 
 interface MailboxProps {
-  port: number;
-  label: string;
+  portInfo: PortInfo;
   packets: AnimatingPacket[];
   isActive?: boolean;
   className?: string;
@@ -13,8 +12,7 @@ interface MailboxProps {
 }
 
 export function Mailbox({
-  port,
-  label,
+  portInfo,
   packets,
   isActive = false,
   className,
@@ -66,8 +64,10 @@ export function Mailbox({
 
         {/* Labels */}
         <div className="mt-2 text-center">
-          <p className="text-xs font-medium text-foreground">{port}</p>
-          <p className="text-[10px] text-muted-foreground">{label}</p>
+          {portInfo.type === 'port' && (
+            <p className="text-xs font-medium text-foreground">{portInfo.port}</p>
+          )}
+          <p className="text-[10px] text-muted-foreground">{portInfo.label}</p>
         </div>
       </button>
 
@@ -88,8 +88,12 @@ export function Mailbox({
                   <div className="w-6 h-1 bg-foreground/80 rounded-full" />
                 </div>
                 <div>
-                  <p className="font-medium text-foreground">Port {port}</p>
-                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="font-medium text-foreground">
+                    {portInfo.type === 'port' ? `Port ${portInfo.port}` : portInfo.label}
+                  </p>
+                  {portInfo.type === 'port' && (
+                    <p className="text-xs text-muted-foreground">{portInfo.label}</p>
+                  )}
                 </div>
               </div>
               <button

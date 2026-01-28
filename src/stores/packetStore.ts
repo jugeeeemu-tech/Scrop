@@ -2,12 +2,30 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type { AnimatingPacket, CapturedPacket, PortInfo } from '../types';
 import {
+  DEFAULT_PORTS,
   LAYER_ACTIVE_FLASH_DURATION,
   LAYER_TRANSITION_DURATION,
   MAX_ANIMATING_PACKETS,
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
 } from '../constants';
+
+/**
+ * 宛先ポート番号からポストのインデックスを計算
+ * DEFAULT_PORTSに該当するポートがあればそのインデックス、なければetc
+ */
+function resolveTargetPort(destPort: number): number {
+  const etcIndex = DEFAULT_PORTS.length - 1;
+
+  for (let i = 0; i < DEFAULT_PORTS.length; i++) {
+    const portInfo = DEFAULT_PORTS[i];
+    if (portInfo.type === 'port' && portInfo.port === destPort) {
+      return i;
+    }
+  }
+
+  return etcIndex;
+}
 
 // Store state type
 export interface PacketStoreState {
@@ -93,7 +111,11 @@ function setFwActive(active: boolean) {
   emitChange();
 }
 
-function processPacket(packet: AnimatingPacket, result: 'delivered' | 'nic-drop' | 'fw-drop') {
+function processPacket(rawPacket: AnimatingPacket, result: 'delivered' | 'nic-drop' | 'fw-drop') {
+  // 振り分け先を計算
+  const targetPort = resolveTargetPort(rawPacket.destPort);
+  const packet = { ...rawPacket, targetPort };
+
   // Capture current generation to detect stale callbacks
   const generation = storeGeneration;
 

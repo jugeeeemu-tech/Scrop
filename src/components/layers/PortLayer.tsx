@@ -121,12 +121,11 @@ export function PortLayer({
         <div className="flex flex-wrap justify-center gap-6 md:gap-10 mb-8">
           {ports.map((portInfo, index) => (
             <Mailbox
-              key={portInfo.port}
+              key={portInfo.type === 'port' ? portInfo.port : 'etc'}
               ref={(el) => {
                 mailboxRefs.current[index] = el;
               }}
-              port={portInfo.port}
-              label={portInfo.label}
+              portInfo={portInfo}
               packets={deliveredPackets[index] || []}
               isActive={animatingPackets.some((p) => p.targetPort === index)}
             />

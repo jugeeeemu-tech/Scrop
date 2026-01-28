@@ -1,4 +1,4 @@
-export type Protocol = 'TCP' | 'UDP' | 'ICMP' | 'OTHER';
+export type Protocol = 'TCP' | 'UDP';
 export type DropReason = 'FIREWALL_RULE' | 'RATE_LIMIT' | 'XDP_DROP' | 'INVALID_PACKET';
 export type LayerType = 'PORT' | 'FW' | 'NIC';
 
@@ -30,15 +30,24 @@ export interface AnimatingPacket {
   size: number;
   source: string;
   destination: string;
+  destPort: number;
   targetPort?: number;
   timestamp: number;
   reason?: string;
 }
 
-export interface PortInfo {
+export interface SpecificPortInfo {
+  type: 'port';
   port: number;
   label: string;
 }
+
+export interface EtcPortInfo {
+  type: 'etc';
+  label: string;
+}
+
+export type PortInfo = SpecificPortInfo | EtcPortInfo;
 
 export type PacketResult = 'delivered' | 'nic-drop' | 'fw-drop';
 

@@ -20,7 +20,7 @@ export const LAYER_COLORS = {
   },
 } as const;
 
-// Protocol colors
+// L4プロトコル色（パケットの背景色等に使用）
 export const PROTOCOL_COLORS = {
   TCP: {
     bg: 'bg-blue-500',
@@ -34,18 +34,15 @@ export const PROTOCOL_COLORS = {
     border: 'border-green-500',
     light: 'bg-green-100',
   },
-  ICMP: {
-    bg: 'bg-amber-500',
-    text: 'text-amber-500',
-    border: 'border-amber-500',
-    light: 'bg-amber-100',
-  },
-  OTHER: {
-    bg: 'bg-gray-500',
-    text: 'text-gray-500',
-    border: 'border-gray-500',
-    light: 'bg-gray-100',
-  },
+} as const;
+
+// サービス名の色（ポート番号→サービス名の表示用）
+export const SERVICE_COLORS: Record<string, { bg: string; text: string; light: string }> = {
+  HTTP: { bg: 'bg-blue-500', text: 'text-blue-500', light: 'bg-blue-100' },
+  HTTPS: { bg: 'bg-blue-600', text: 'text-blue-600', light: 'bg-blue-100' },
+  SSH: { bg: 'bg-green-500', text: 'text-green-500', light: 'bg-green-100' },
+  Proxy: { bg: 'bg-orange-500', text: 'text-orange-500', light: 'bg-orange-100' },
+  Other: { bg: 'bg-gray-500', text: 'text-gray-500', light: 'bg-gray-100' },
 } as const;
 
 // Layer labels
@@ -72,5 +69,15 @@ export const SERVICE_NAMES: Record<number, string> = {
   3306: 'MySQL',
   5432: 'PostgreSQL',
   6379: 'Redis',
-  8080: 'HTTP Alt',
+  8080: 'Proxy',
 } as const;
+
+/** ポート番号からサービス名を取得 */
+export function getServiceName(port: number): string {
+  return SERVICE_NAMES[port] ?? 'Other';
+}
+
+/** サービス名から色を取得 */
+export function getServiceColors(serviceName: string) {
+  return SERVICE_COLORS[serviceName] ?? SERVICE_COLORS.Other;
+}
