@@ -12,7 +12,7 @@ import {
   ETC_PORT_KEY,
   getPortKey,
 } from '../constants';
-import { getPorts } from './portStore';
+import { getPorts, subscribePorts } from './portStore';
 import {
   startMockCapture,
   stopMockCapture,
@@ -602,3 +602,13 @@ export function clearAll(): void {
   store = createInitialStore(getPorts());
   emitChange();
 }
+
+// Module-level subscription: sync packetStore when portStore changes
+let _prevPortsRef: PortInfo[] | null = null;
+subscribePorts(() => {
+  const currentPorts = getPorts();
+  if (currentPorts !== _prevPortsRef) {
+    _prevPortsRef = currentPorts;
+    syncPortConfig(currentPorts);
+  }
+});

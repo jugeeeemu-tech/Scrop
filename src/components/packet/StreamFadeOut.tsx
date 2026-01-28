@@ -19,27 +19,26 @@ export function StreamFadeOut({ active, children, onFadeComplete }: StreamFadeOu
     prevActiveRef.current = active;
 
     if (active) {
-      // Cancel any pending fade-out, snap to visible
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
       setVisible(true);
     } else if (wasActive) {
-      // Just became inactive - start fade-out
       timerRef.current = setTimeout(() => {
         setVisible(false);
         timerRef.current = null;
         onFadeCompleteRef.current?.();
       }, STREAM_DRAIN_DURATION);
     }
-  }, [active]);
 
-  useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
     };
-  }, []);
+  }, [active]);
 
   if (!visible) return null;
 

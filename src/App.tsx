@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { usePacketStore } from './hooks/usePacketStore';
 import { usePortStore } from './hooks/usePortStore';
 import { useCaptureControl } from './hooks/useCaptureControl';
@@ -12,7 +11,6 @@ import {
   handleNicToFwComplete,
   handleIncomingComplete,
   handleDropAnimationComplete,
-  syncPortConfig,
 } from './stores/packetStore';
 import {
   addPort,
@@ -31,11 +29,6 @@ function App() {
   const store = usePacketStore();
   const portStore = usePortStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
-
-  // Sync packetStore when ports change
-  useEffect(() => {
-    syncPortConfig(portStore.ports);
-  }, [portStore.ports]);
 
   return (
     <div className="min-h-screen bg-background">

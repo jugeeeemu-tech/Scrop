@@ -4,7 +4,7 @@ import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
 import { Reorder, useMotionValue, useTransform } from 'framer-motion';
 import type { AnimatingPacket, PortInfo } from '../../types';
 import { ETC_PORT_KEY, getPortKey } from '../../constants';
@@ -244,17 +244,15 @@ export function PortLayer({
 
   // Track ports that need visible stream (active or fading out)
   const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>([]);
+  const [prevStreamingPorts, setPrevStreamingPorts] = useState(streamingPorts);
 
-  useEffect(() => {
-    setVisibleStreamPorts((prev) => {
-      // Merge: keep ports already visible + add new streaming ports
-      const combined = [...new Set([...prev, ...streamingPorts])];
-      if (combined.length === prev.length && combined.every((p, i) => p === prev[i])) {
-        return prev;
-      }
-      return combined;
-    });
-  }, [streamingPorts]);
+  if (streamingPorts !== prevStreamingPorts) {
+    setPrevStreamingPorts(streamingPorts);
+    const combined = [...new Set([...visibleStreamPorts, ...streamingPorts])];
+    if (combined.length !== visibleStreamPorts.length || !combined.every((p, i) => p === visibleStreamPorts[i])) {
+      setVisibleStreamPorts(combined);
+    }
+  }
 
   const handleFadeComplete = (port: number) => {
     setVisibleStreamPorts((prev) => prev.filter((p) => p !== port));
