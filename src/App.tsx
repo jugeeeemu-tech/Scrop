@@ -23,11 +23,6 @@ function App() {
   const nicDropStreamMode = getNicDropStreamMode(store.nicDropAnimations);
   const fwDropStreamMode = getFwDropStreamMode(store.fwDropAnimations);
 
-  const onIncomingComplete = (id: string) => handleIncomingComplete(id);
-  const onNicToFwComplete = (id: string) => handleNicToFwComplete(id);
-  const onFwToPortComplete = (id: string, targetPort: number) => handleFwToPortComplete(id, targetPort);
-  const onDropAnimationComplete = (id: string, layer: 'nic' | 'fw') => handleDropAnimationComplete(id, layer);
-
   return (
     <div className="min-h-screen bg-background">
       <Header
@@ -42,7 +37,7 @@ function App() {
           ports={DEFAULT_PORTS}
           deliveredPackets={store.deliveredPackets}
           animatingPackets={store.fwToPortPackets}
-          onAnimationComplete={onFwToPortComplete}
+          onAnimationComplete={handleFwToPortComplete}
           streamingPorts={streamingPorts}
         />
 
@@ -51,8 +46,8 @@ function App() {
           isActive={store.fwActive}
           dropAnimations={store.fwDropAnimations}
           risingPackets={store.nicToFwPackets}
-          onDropAnimationComplete={(id) => onDropAnimationComplete(id, 'fw')}
-          onRisingComplete={onNicToFwComplete}
+          onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'fw')}
+          onRisingComplete={handleNicToFwComplete}
           isDropStreamMode={fwDropStreamMode}
         />
 
@@ -61,8 +56,8 @@ function App() {
           isActive={store.nicActive}
           dropAnimations={store.nicDropAnimations}
           incomingPackets={store.incomingPackets}
-          onDropAnimationComplete={(id) => onDropAnimationComplete(id, 'nic')}
-          onIncomingComplete={onIncomingComplete}
+          onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
+          onIncomingComplete={handleIncomingComplete}
           isDropStreamMode={nicDropStreamMode}
         />
       </main>
