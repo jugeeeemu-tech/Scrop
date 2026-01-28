@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
 
-const DEFAULT_PORT_COUNT: u8 = 5;
+const DEFAULT_PORT_COUNT: u8 = 4;
 
 pub struct AppState {
     capture: Arc<Mutex<MockCapture>>,

@@ -18,22 +18,27 @@ pub struct CapturedPacket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Protocol {
-    Tcp,
-    Udp,
     Http,
     Https,
     Ssh,
 }
 
 impl Protocol {
+    /// プロトコルに対応するポートインデックスを返す
+    pub fn target_port_indices(&self) -> &[u8] {
+        match self {
+            Protocol::Http => &[0, 3],  // ポート80, 8080（Proxy）
+            Protocol::Https => &[1],     // ポート443
+            Protocol::Ssh => &[2],       // ポート22
+        }
+    }
+
     pub fn random() -> Self {
         use rand::Rng;
         let mut rng = rand::rng();
-        match rng.random_range(0..5) {
-            0 => Protocol::Tcp,
-            1 => Protocol::Udp,
-            2 => Protocol::Http,
-            3 => Protocol::Https,
+        match rng.random_range(0..3) {
+            0 => Protocol::Http,
+            1 => Protocol::Https,
             _ => Protocol::Ssh,
         }
     }
@@ -54,7 +59,7 @@ pub struct AnimatingPacket {
 }
 
 impl AnimatingPacket {
-    pub fn generate(counter: u64, port_count: u8) -> Self {
+    pub fn generate(counter: u64, _port_count: u8) -> Self {
         use rand::Rng;
         let mut rng = rand::rng();
 
@@ -73,13 +78,17 @@ impl AnimatingPacket {
                 .collect::<String>()
         );
 
+        let protocol = Protocol::random();
+        let valid_ports = protocol.target_port_indices();
+        let target_port = valid_ports[rng.random_range(0..valid_ports.len())];
+
         AnimatingPacket {
             id,
-            protocol: Protocol::random(),
+            protocol,
             size: rng.random_range(64..1564),
             source: format!("192.168.1.{}", rng.random_range(1..255)),
             destination: format!("10.0.0.{}", rng.random_range(1..255)),
-            target_port: Some(rng.random_range(0..port_count)),
+            target_port: Some(target_port),
             timestamp: chrono::Utc::now().timestamp_millis(),
             reason: None,
         }

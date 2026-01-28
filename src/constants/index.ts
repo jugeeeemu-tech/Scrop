@@ -20,8 +20,7 @@ export const DEFAULT_PORTS = [
   { port: 80, label: 'HTTP' },
   { port: 443, label: 'HTTPS' },
   { port: 22, label: 'SSH' },
-  { port: 3306, label: 'MySQL' },
   { port: 8080, label: 'Proxy' },
 ] as const;
 
-export const PROTOCOLS = ['TCP', 'UDP', 'HTTP', 'HTTPS', 'SSH'] as const;
+export const PROTOCOLS = ['HTTP', 'HTTPS', 'SSH'] as const;
