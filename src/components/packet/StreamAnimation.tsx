@@ -1,6 +1,6 @@
 import { Package } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { STREAM_PACKET_COUNT, STREAM_STAGGER_DELAY } from '../../constants';
+import { PACKET_ANIMATION_DURATION, STREAM_PACKET_COUNT, STREAM_STAGGER_DELAY } from '../../constants';
 
 type StreamVariant = 'packet' | 'drop';
 
@@ -25,7 +25,7 @@ export function StreamAnimation({ variant, targetX }: StreamAnimationProps) {
             initial={{ bottom: 0, opacity: 0 }}
             animate={{ bottom: '100%', opacity: [0, 1, 1, 0] }}
             transition={{
-              duration: 0.8,
+              duration: PACKET_ANIMATION_DURATION / 1000,
               ease: 'easeOut',
               repeat: Infinity,
               delay: index * (STREAM_STAGGER_DELAY / 1000),
@@ -55,7 +55,7 @@ export function StreamAnimation({ variant, targetX }: StreamAnimationProps) {
             rotate: [0, 0, 15, -10, 5],
           }}
           transition={{
-            duration: 0.8,
+            duration: PACKET_ANIMATION_DURATION / 1000,
             ease: 'easeInOut',
             repeat: Infinity,
             delay: index * (STREAM_STAGGER_DELAY / 1000),

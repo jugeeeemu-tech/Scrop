@@ -1,6 +1,7 @@
 import { Package } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useRef } from 'react';
+import { PACKET_ANIMATION_DURATION } from '../../constants';
 
 interface AnimatedPacketProps {
   targetX: number;
@@ -18,11 +19,11 @@ export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
       initial={{ bottom: 0, opacity: 1, scale: 1 }}
       animate={{ bottom: '100%', opacity: 0, scale: 0.5 }}
       transition={{
-        duration: 0.9,
+        duration: PACKET_ANIMATION_DURATION / 1000,
         ease: 'easeOut',
-        bottom: { duration: 0.7 },
-        opacity: { delay: 0.7, duration: 0.2 },
-        scale: { delay: 0.7, duration: 0.2 },
+        bottom: { duration: (PACKET_ANIMATION_DURATION / 1000) * (7 / 9) },
+        opacity: { delay: (PACKET_ANIMATION_DURATION / 1000) * (7 / 9), duration: (PACKET_ANIMATION_DURATION / 1000) * (2 / 9) },
+        scale: { delay: (PACKET_ANIMATION_DURATION / 1000) * (7 / 9), duration: (PACKET_ANIMATION_DURATION / 1000) * (2 / 9) },
       }}
       onAnimationComplete={() => onCompleteRef.current()}
     >

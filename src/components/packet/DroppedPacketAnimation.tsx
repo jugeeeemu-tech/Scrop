@@ -1,6 +1,7 @@
 import { Package } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useRef } from 'react';
+import { DROP_ANIMATION_DURATION } from '../../constants';
 
 interface DroppedPacketAnimationProps {
   direction: 'left' | 'right';
@@ -20,11 +21,11 @@ export function DroppedPacketAnimation({ direction, onComplete }: DroppedPacketA
       initial={{ opacity: 1, x: -96, rotate: 0 }}
       animate={{ opacity: 0, x: translateX, rotate: 12 }}
       transition={{
-        duration: 1,
+        duration: DROP_ANIMATION_DURATION / 1000,
         ease: 'easeOut',
-        opacity: { delay: 0.6, duration: 0.4 },
-        x: { duration: 0.6 },
-        rotate: { duration: 0.6 },
+        opacity: { delay: (DROP_ANIMATION_DURATION / 1000) * 0.6, duration: (DROP_ANIMATION_DURATION / 1000) * 0.4 },
+        x: { duration: (DROP_ANIMATION_DURATION / 1000) * 0.6 },
+        rotate: { duration: (DROP_ANIMATION_DURATION / 1000) * 0.6 },
       }}
       onAnimationComplete={() => onCompleteRef.current()}
     >
