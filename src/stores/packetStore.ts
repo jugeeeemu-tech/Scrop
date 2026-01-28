@@ -32,6 +32,9 @@ export interface PacketStoreState {
 
   // Capture state
   isCapturing: boolean;
+
+  // Error state
+  error: string | null;
 }
 
 type Listener = () => void;
@@ -72,6 +75,7 @@ function createInitialStore(portCount: number): PacketStoreState {
     nicActive: false,
     fwActive: false,
     isCapturing: false,
+    error: null,
   };
 }
 
@@ -192,10 +196,12 @@ async function startCapture(): Promise<void> {
   try {
     await invoke('start_capture');
     subscribeToPackets(true);
-    store = { ...store, isCapturing: true };
+    store = { ...store, isCapturing: true, error: null };
     emitChange();
   } catch (err) {
     console.error('Failed to start capture:', err);
+    store = { ...store, error: err instanceof Error ? err.message : String(err) };
+    emitChange();
   }
 }
 
@@ -203,10 +209,12 @@ async function stopCapture(): Promise<void> {
   try {
     await invoke('stop_capture');
     subscribeToPackets(false);
-    store = { ...store, isCapturing: false };
+    store = { ...store, isCapturing: false, error: null };
     emitChange();
   } catch (err) {
     console.error('Failed to stop capture:', err);
+    store = { ...store, error: err instanceof Error ? err.message : String(err) };
+    emitChange();
   }
 }
 
@@ -233,6 +241,8 @@ export async function resetCapture(): Promise<void> {
     await startCapture();
   } catch (err) {
     console.error('Failed to reset capture:', err);
+    store = { ...store, error: err instanceof Error ? err.message : String(err) };
+    emitChange();
   }
 }
 
