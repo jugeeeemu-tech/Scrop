@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useCallback } from 'react';
+import { useSyncExternalStore } from 'react';
 import {
   subscribe,
   getSnapshot,
@@ -16,13 +16,8 @@ export interface UseCaptureControlResult {
 export function useCaptureControl(): UseCaptureControlResult {
   const store = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  const toggleCapture = useCallback(() => {
-    storeToggleCapture();
-  }, []);
-
-  const resetCapture = useCallback(() => {
-    storeResetCapture();
-  }, []);
+  const toggleCapture = () => storeToggleCapture();
+  const resetCapture = () => storeResetCapture();
 
   return {
     isCapturing: store.isCapturing,

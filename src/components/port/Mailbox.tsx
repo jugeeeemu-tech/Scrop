@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Package, X } from 'lucide-react';
-import { useState, forwardRef } from 'react';
+import { useState } from 'react';
 import type { AnimatingPacket } from '../../types';
 
 interface MailboxProps {
@@ -9,12 +9,17 @@ interface MailboxProps {
   packets: AnimatingPacket[];
   isActive?: boolean;
   className?: string;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
-export const Mailbox = forwardRef<HTMLDivElement, MailboxProps>(function Mailbox(
-  { port, label, packets, isActive = false, className },
-  ref
-) {
+export function Mailbox({
+  port,
+  label,
+  packets,
+  isActive = false,
+  className,
+  ref,
+}: MailboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const packetCount = packets.length;
 
@@ -129,4 +134,4 @@ export const Mailbox = forwardRef<HTMLDivElement, MailboxProps>(function Mailbox
       )}
     </div>
   );
-});
+}

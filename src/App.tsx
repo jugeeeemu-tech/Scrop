@@ -1,4 +1,3 @@
-import { useCallback } from 'react';
 import { usePacketStore } from './hooks/usePacketStore';
 import { useCaptureControl } from './hooks/useCaptureControl';
 import { Header } from './components/layout/Header';
@@ -24,16 +23,10 @@ function App() {
   const nicDropStreamMode = getNicDropStreamMode(store.nicDropAnimations);
   const fwDropStreamMode = getFwDropStreamMode(store.fwDropAnimations);
 
-  const onIncomingComplete = useCallback((id: string) => handleIncomingComplete(id), []);
-  const onNicToFwComplete = useCallback((id: string) => handleNicToFwComplete(id), []);
-  const onFwToPortComplete = useCallback(
-    (id: string, targetPort: number) => handleFwToPortComplete(id, targetPort),
-    []
-  );
-  const onDropAnimationComplete = useCallback(
-    (id: string, layer: 'nic' | 'fw') => handleDropAnimationComplete(id, layer),
-    []
-  );
+  const onIncomingComplete = (id: string) => handleIncomingComplete(id);
+  const onNicToFwComplete = (id: string) => handleNicToFwComplete(id);
+  const onFwToPortComplete = (id: string, targetPort: number) => handleFwToPortComplete(id, targetPort);
+  const onDropAnimationComplete = (id: string, layer: 'nic' | 'fw') => handleDropAnimationComplete(id, layer);
 
   return (
     <div className="min-h-screen bg-background">
