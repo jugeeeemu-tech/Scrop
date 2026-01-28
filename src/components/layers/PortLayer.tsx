@@ -1,4 +1,5 @@
 import { Mailbox } from '../port/Mailbox';
+import { AddMailbox } from '../port/AddMailbox';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
@@ -7,17 +8,27 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AnimatingPacket, PortInfo } from '../../types';
 
 interface PortLayerProps {
-  ports: readonly PortInfo[];
+  ports: PortInfo[];
   deliveredPackets: Record<number, AnimatingPacket[]>;
   deliveredCounterPerPort: Record<number, number>;
   animatingPackets: AnimatingPacket[];
   onAnimationComplete: (packetId: string, targetPort: number) => void;
   streamingPorts?: number[];
+  editingIndex: number | null;
+  editingField: 'port' | 'label' | null;
+  onAddPort: () => void;
+  onPortChange: (index: number, port: number) => void;
+  onLabelChange: (index: number, label: string) => void;
+  onStartEdit: (index: number, field: 'port' | 'label') => void;
+  onCommitEdit: () => void;
+  onCancelEdit: () => void;
+  onRemovePort: (index: number) => void;
 }
 
 interface PositionStore {
   subscribe: (listener: () => void) => () => void;
   getSnapshot: () => number[];
+  recalculate: () => void;
 }
 
 // Module-level constant to avoid creating new empty array on each getSnapshot call
@@ -92,6 +103,7 @@ function createPositionStore(
       }
       return positions;
     },
+    recalculate: updatePositions,
   };
 }
 
@@ -102,10 +114,23 @@ export function PortLayer({
   animatingPackets,
   onAnimationComplete,
   streamingPorts = [],
+  editingIndex,
+  editingField,
+  onAddPort,
+  onPortChange,
+  onLabelChange,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
+  onRemovePort,
 }: PortLayerProps) {
   const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
   const animationZoneRef = useRef<HTMLDivElement>(null);
   const storeRef = useRef<PositionStore | null>(null);
+  const recalcRAF = useRef<number>(0);
+
+  // Keep ref array length in sync with ports
+  mailboxRefs.current.length = ports.length;
 
   if (!storeRef.current) {
     storeRef.current = createPositionStore(
@@ -113,6 +138,15 @@ export function PortLayer({
       () => mailboxRefs.current
     );
   }
+
+  const setMailboxRef = (index: number, el: HTMLDivElement | null) => {
+    mailboxRefs.current[index] = el;
+    // Schedule recalculation after DOM layout settles
+    cancelAnimationFrame(recalcRAF.current);
+    recalcRAF.current = requestAnimationFrame(() => {
+      storeRef.current?.recalculate();
+    });
+  };
 
   const mailboxPositions = useSyncExternalStore(
     storeRef.current.subscribe,
@@ -138,23 +172,41 @@ export function PortLayer({
     setVisibleStreamPorts((prev) => prev.filter((p) => p !== port));
   };
 
+  // Find the etc index to insert AddMailbox before it
+  const etcIndex = ports.findIndex((p) => p.type === 'etc');
+
   return (
     <section className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
       <div className="flex-1 flex flex-col justify-center max-w-4xl mx-auto w-full">
         {/* Mailboxes */}
         <div className="flex flex-wrap justify-center gap-6 md:gap-10 mb-8">
-          {ports.map((portInfo, index) => (
-            <Mailbox
-              key={portInfo.type === 'port' ? portInfo.port : 'etc'}
-              ref={(el) => {
-                mailboxRefs.current[index] = el;
-              }}
-              portInfo={portInfo}
-              packets={deliveredPackets[index] || []}
-              packetCount={deliveredCounterPerPort[index] || 0}
-              isActive={animatingPackets.some((p) => p.targetPort === index)}
-            />
-          ))}
+          {ports.map((portInfo, index) => {
+            // Insert AddMailbox before etc
+            const isEtc = portInfo.type === 'etc';
+
+            return (
+              <div key={portInfo.type === 'port' ? (portInfo.port === 0 ? `new-${index}` : portInfo.port) : 'etc'} className="flex gap-6 md:gap-10">
+                {isEtc && index === etcIndex && (
+                  <AddMailbox onClick={onAddPort} />
+                )}
+                <Mailbox
+                  ref={(el) => setMailboxRef(index, el)}
+                  portInfo={portInfo}
+                  packets={deliveredPackets[index] || []}
+                  packetCount={deliveredCounterPerPort[index] || 0}
+                  isActive={animatingPackets.some((p) => p.targetPort === index)}
+                  isEditing={editingIndex === index}
+                  editingField={editingIndex === index ? editingField : null}
+                  onPortChange={(port) => onPortChange(index, port)}
+                  onLabelChange={(label) => onLabelChange(index, label)}
+                  onStartEdit={(field) => onStartEdit(index, field)}
+                  onCommitEdit={onCommitEdit}
+                  onCancelEdit={onCancelEdit}
+                  onRemove={isEtc ? undefined : () => onRemovePort(index)}
+                />
+              </div>
+            );
+          })}
         </div>
 
         {/* Animation zone - packets rising from below */}

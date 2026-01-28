@@ -1,6 +1,7 @@
 import { cn } from '../../lib/utils';
 import { Package, X } from 'lucide-react';
 import { useState } from 'react';
+import { EditableLabel } from './EditableLabel';
 import type { AnimatingPacket, PortInfo } from '../../types';
 
 interface MailboxProps {
@@ -10,6 +11,14 @@ interface MailboxProps {
   isActive?: boolean;
   className?: string;
   ref?: React.Ref<HTMLDivElement>;
+  isEditing?: boolean;
+  editingField?: 'port' | 'label' | null;
+  onPortChange?: (port: number) => void;
+  onLabelChange?: (label: string) => void;
+  onStartEdit?: (field: 'port' | 'label') => void;
+  onCommitEdit?: () => void;
+  onCancelEdit?: () => void;
+  onRemove?: () => void;
 }
 
 export function Mailbox({
@@ -19,17 +28,40 @@ export function Mailbox({
   isActive = false,
   className,
   ref,
+  isEditing = false,
+  editingField,
+  onPortChange,
+  onLabelChange,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
+  onRemove,
 }: MailboxProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const isEtc = portInfo.type === 'etc';
 
   return (
-    <div ref={ref} className={className}>
+    <div ref={ref} className={cn('relative group', className)}>
+      {/* Remove button */}
+      {onRemove && !isEtc && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="absolute -top-1 -left-1 z-10 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:scale-110"
+        >
+          <X className="w-3 h-3" />
+        </button>
+      )}
+
+      {/* Mailbox body - clickable for modal */}
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="relative flex flex-col items-center cursor-pointer group"
+        className="relative flex flex-col items-center cursor-pointer"
       >
-        {/* Mailbox Post */}
         <div className="relative">
           {/* Flag indicator */}
           <div
@@ -62,15 +94,48 @@ export function Mailbox({
           {/* Post */}
           <div className="mx-auto w-3 h-8 bg-foreground/20 rounded-b" />
         </div>
-
-        {/* Labels */}
-        <div className="mt-2 text-center">
-          <p className="text-xs font-medium text-foreground">
-            {portInfo.type === 'port' ? portInfo.port : '—'}
-          </p>
-          <p className="text-[10px] text-muted-foreground">{portInfo.label}</p>
-        </div>
       </button>
+
+      {/* Labels - separate from button for double-click editing */}
+      <div className="mt-2 text-center">
+        {isEtc ? (
+          <>
+            <p className="text-xs font-medium text-foreground">—</p>
+            <p className="text-[10px] text-muted-foreground">{portInfo.label}</p>
+          </>
+        ) : (
+          <>
+            <EditableLabel
+              value={portInfo.port === 0 ? '' : String(portInfo.port)}
+              isEditing={isEditing && editingField === 'port'}
+              onDoubleClick={() => onStartEdit?.('port')}
+              onChange={(val) => {
+                const num = parseInt(val, 10);
+                if (!isNaN(num) && num >= 0 && num <= 65535) {
+                  onPortChange?.(num);
+                } else if (val === '') {
+                  onPortChange?.(0);
+                }
+              }}
+              onCommit={() => onCommitEdit?.()}
+              onCancel={() => onCancelEdit?.()}
+              placeholder="Port"
+              className="text-xs font-medium text-foreground"
+              type="number"
+            />
+            <EditableLabel
+              value={portInfo.label}
+              isEditing={isEditing && editingField === 'label'}
+              onDoubleClick={() => onStartEdit?.('label')}
+              onChange={(val) => onLabelChange?.(val)}
+              onCommit={() => onCommitEdit?.()}
+              onCancel={() => onCancelEdit?.()}
+              placeholder="Label"
+              className="text-[10px] text-muted-foreground"
+            />
+          </>
+        )}
+      </div>
 
       {/* Packet Detail Modal */}
       {isOpen && (

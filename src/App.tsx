@@ -1,24 +1,40 @@
+import { useEffect } from 'react';
 import { usePacketStore } from './hooks/usePacketStore';
+import { usePortStore } from './hooks/usePortStore';
 import { useCaptureControl } from './hooks/useCaptureControl';
 import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
 import { FWLayer } from './components/layers/FWLayer';
 import { NICLayer } from './components/layers/NICLayer';
 import { MockController } from './components/dev/MockController';
-import { DEFAULT_PORTS } from './constants';
 import {
   handleFwToPortComplete,
   handleNicToFwComplete,
   handleIncomingComplete,
   handleDropAnimationComplete,
+  syncPortConfig,
 } from './stores/packetStore';
+import {
+  addPort,
+  updatePort,
+  removePort,
+  setEditing,
+  commitEditing,
+  clearEditing,
+} from './stores/portStore';
 
 // Detect if running in Tauri environment
 const isTauri = '__TAURI_INTERNALS__' in window;
 
 function App() {
   const store = usePacketStore();
+  const portStore = usePortStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
+
+  // Sync packetStore when ports change
+  useEffect(() => {
+    syncPortConfig(portStore.ports.length);
+  }, [portStore.ports.length]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -33,12 +49,21 @@ function App() {
 
       <main>
         <PortLayer
-          ports={DEFAULT_PORTS}
+          ports={portStore.ports}
           deliveredPackets={store.deliveredPackets}
           deliveredCounterPerPort={store.deliveredCounterPerPort}
           animatingPackets={store.fwToPortPackets}
           onAnimationComplete={handleFwToPortComplete}
           streamingPorts={store.streamingPorts}
+          editingIndex={portStore.editingIndex}
+          editingField={portStore.editingField}
+          onAddPort={addPort}
+          onPortChange={(index, port) => updatePort(index, { port })}
+          onLabelChange={(index, label) => updatePort(index, { label })}
+          onStartEdit={setEditing}
+          onCommitEdit={commitEditing}
+          onCancelEdit={clearEditing}
+          onRemovePort={removePort}
         />
 
         <FWLayer

@@ -1,5 +1,6 @@
 import type { AnimatingPacket, PacketResult, CapturedPacket } from '../types';
-import { DEFAULT_PORTS, PROTOCOLS } from '../constants';
+import { PROTOCOLS } from '../constants';
+import { getPorts } from '../stores/portStore';
 
 type PacketListener = (packet: CapturedPacket) => void;
 
@@ -37,7 +38,8 @@ function randomElement<T>(arr: readonly T[]): T {
 }
 
 function generatePacket(): AnimatingPacket {
-  const portInfo = DEFAULT_PORTS[Math.floor(Math.random() * DEFAULT_PORTS.length)];
+  const ports = getPorts();
+  const portInfo = ports[Math.floor(Math.random() * ports.length)];
   const destPort = portInfo.type === 'port' ? portInfo.port : Math.floor(Math.random() * 60000) + 1024;
 
   return {

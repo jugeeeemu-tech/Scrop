@@ -21,12 +21,14 @@ export const MAX_STORED_DROPPED_PACKETS = 50;
 export const MAX_STORED_DELIVERED_PACKETS = 20;
 
 // Port configuration
-export const DEFAULT_PORTS = [
+import type { PortInfo } from '../types';
+
+export const DEFAULT_PORTS: PortInfo[] = [
   { type: 'port', port: 80, label: 'HTTP' },
   { type: 'port', port: 443, label: 'HTTPS' },
   { type: 'port', port: 22, label: 'SSH' },
   { type: 'port', port: 8080, label: 'Proxy' },
   { type: 'etc', label: 'Other' },
-] as const;
+];
 
 export const PROTOCOLS = ['TCP', 'UDP'] as const;

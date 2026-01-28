@@ -1,8 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import type { AnimatingPacket, CapturedPacket, PortInfo } from '../types';
+import type { AnimatingPacket, CapturedPacket } from '../types';
 import {
-  DEFAULT_PORTS,
   LAYER_ACTIVE_FLASH_DURATION,
   LAYER_TRANSITION_DURATION,
   STREAM_MODE_RATE_WINDOW,
@@ -11,6 +10,7 @@ import {
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
 } from '../constants';
+import { getPorts } from './portStore';
 import {
   startMockCapture,
   stopMockCapture,
@@ -26,10 +26,11 @@ const isTauri = '__TAURI_INTERNALS__' in window;
  * DEFAULT_PORTSに該当するポートがあればそのインデックス、なければetc
  */
 function resolveTargetPort(destPort: number): number {
-  const etcIndex = DEFAULT_PORTS.length - 1;
+  const ports = getPorts();
+  const etcIndex = ports.length - 1;
 
-  for (let i = 0; i < DEFAULT_PORTS.length; i++) {
-    const portInfo = DEFAULT_PORTS[i];
+  for (let i = 0; i < ports.length; i++) {
+    const portInfo = ports[i];
     if (portInfo.type === 'port' && portInfo.port === destPort) {
       return i;
     }
@@ -477,6 +478,7 @@ export async function resetCapture(): Promise<void> {
     // Increment generation to invalidate pending callbacks
     storeGeneration++;
     clearRateTimes();
+    portCount = getPorts().length;
     store = createInitialStore(portCount);
     emitChange();
     // Restart capture after reset
@@ -519,9 +521,17 @@ export function subscribeToPackets(isCapturing: boolean): void {
   }
 }
 
-export function initializeStore(ports: readonly PortInfo[]): void {
-  portCount = ports.length;
-  store = createInitialStore(portCount);
+export function syncPortConfig(newPortCount: number): void {
+  if (newPortCount === portCount) return;
+  // Extend deliveredPackets and deliveredCounterPerPort for new ports
+  const newDeliveredPackets = { ...store.deliveredPackets };
+  const newCounterPerPort = { ...store.deliveredCounterPerPort };
+  for (let i = portCount; i < newPortCount; i++) {
+    if (!(i in newDeliveredPackets)) newDeliveredPackets[i] = [];
+    if (!(i in newCounterPerPort)) newCounterPerPort[i] = 0;
+  }
+  portCount = newPortCount;
+  store = { ...store, deliveredPackets: newDeliveredPackets, deliveredCounterPerPort: newCounterPerPort };
   emitChange();
 }
 
