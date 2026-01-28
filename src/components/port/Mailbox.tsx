@@ -102,7 +102,7 @@ export function Mailbox({
             <EditableLabel
               value={portInfo.port === 0 ? '' : String(portInfo.port)}
               isEditing={isEditing && editingField === 'port'}
-              onDoubleClick={() => onStartEdit?.('port')}
+              onClick={() => onStartEdit?.('port')}
               onChange={(val) => {
                 const num = parseInt(val, 10);
                 if (!isNaN(num) && num >= 0 && num <= 65535) {
@@ -120,7 +120,7 @@ export function Mailbox({
             <EditableLabel
               value={portInfo.label}
               isEditing={isEditing && editingField === 'label'}
-              onDoubleClick={() => onStartEdit?.('label')}
+              onClick={() => onStartEdit?.('label')}
               onChange={(val) => onLabelChange?.(val)}
               onCommit={() => onCommitEdit?.()}
               onCancel={() => onCancelEdit?.()}

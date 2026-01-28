@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 interface EditableLabelProps {
   value: string;
   isEditing: boolean;
-  onDoubleClick: () => void;
+  onClick: () => void;
   onChange: (value: string) => void;
   onCommit: () => void;
   onCancel: () => void;
@@ -19,7 +19,7 @@ const sharedClassName =
 export function EditableLabel({
   value,
   isEditing,
-  onDoubleClick,
+  onClick,
   onChange,
   onCommit,
   onCancel,
@@ -37,10 +37,10 @@ export function EditableLabel({
   if (!isEditing) {
     return (
       <p
-        className={cn(sharedClassName, 'border-transparent cursor-default', className)}
-        onDoubleClick={(e) => {
+        className={cn(sharedClassName, 'border-transparent cursor-text', className)}
+        onClick={(e) => {
           e.stopPropagation();
-          onDoubleClick();
+          onClick();
         }}
       >
         {value || placeholder || ''}

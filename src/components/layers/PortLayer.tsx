@@ -179,7 +179,7 @@ function DraggableMailbox({
         }
       }}
       onClickCapture={handleClickCapture}
-      className="cursor-grab active:cursor-grabbing"
+      className=""
     >
       <Mailbox ref={mailboxRef} portInfo={portInfo} isDraggable {...mailboxProps} />
     </Reorder.Item>
