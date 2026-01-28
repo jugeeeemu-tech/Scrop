@@ -25,9 +25,7 @@ impl Default for AppState {
 #[tauri::command]
 async fn start_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let capture = state.capture.lock().await;
-    if capture.is_running() {
-        return Err("Capture is already running".to_string());
-    }
+    // Idempotent: start() already handles the case when already running
     capture.start(app);
     Ok(())
 }
@@ -52,8 +50,9 @@ async fn get_capture_status(state: State<'_, AppState>) -> Result<CaptureStatusR
 #[tauri::command]
 async fn reset_capture(state: State<'_, AppState>) -> Result<(), String> {
     let capture = state.capture.lock().await;
+    // Stop capture if running before reset
     if capture.is_running() {
-        return Err("Cannot reset while capturing".to_string());
+        capture.stop();
     }
     capture.reset().await;
     Ok(())

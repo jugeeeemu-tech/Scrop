@@ -42,6 +42,7 @@ const listeners = new Set<Listener>();
 let unlistenPromise: Promise<UnlistenFn> | null = null;
 let portCount = 4;
 let initialized = false;
+let storeGeneration = 0;
 
 // Timers for layer flash
 const activeTimers = {
@@ -89,6 +90,9 @@ function setFwActive(active: boolean) {
 }
 
 function processPacket(packet: AnimatingPacket, result: 'delivered' | 'nic-drop' | 'fw-drop') {
+  // Capture current generation to detect stale callbacks
+  const generation = storeGeneration;
+
   // 1. Start incoming animation immediately
   store = {
     ...store,
@@ -99,6 +103,9 @@ function processPacket(packet: AnimatingPacket, result: 'delivered' | 'nic-drop'
 
   // 2. After LAYER_TRANSITION_DURATION, process at NIC
   setTimeout(() => {
+    // Skip if store was reset
+    if (generation !== storeGeneration) return;
+
     // Flash NIC active
     setNicActive(true);
     if (activeTimers.nic) clearTimeout(activeTimers.nic);
@@ -122,6 +129,9 @@ function processPacket(packet: AnimatingPacket, result: 'delivered' | 'nic-drop'
 
       // 3. After another delay, process at FW
       setTimeout(() => {
+        // Skip if store was reset
+        if (generation !== storeGeneration) return;
+
         // Flash FW active
         setFwActive(true);
         if (activeTimers.fw) clearTimeout(activeTimers.fw);
@@ -210,9 +220,17 @@ export async function toggleCapture(): Promise<void> {
 
 export async function resetCapture(): Promise<void> {
   try {
+    // Stop capture first if running
+    if (store.isCapturing) {
+      await stopCapture();
+    }
     await invoke('reset_capture');
+    // Increment generation to invalidate pending callbacks
+    storeGeneration++;
     store = createInitialStore(portCount);
     emitChange();
+    // Restart capture after reset
+    await startCapture();
   } catch (err) {
     console.error('Failed to reset capture:', err);
   }
@@ -299,6 +317,8 @@ export function handleDropAnimationComplete(packetId: string, layer: 'nic' | 'fw
 }
 
 export function clearAll(): void {
+  // Increment generation to invalidate pending callbacks
+  storeGeneration++;
   store = createInitialStore(portCount);
   emitChange();
 }
