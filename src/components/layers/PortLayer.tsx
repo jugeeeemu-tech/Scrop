@@ -18,6 +18,14 @@ interface PositionStore {
   getSnapshot: () => number[];
 }
 
+function arraysEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 function createPositionStore(
   getAnimationZone: () => HTMLDivElement | null,
   getMailboxRefs: () => (HTMLDivElement | null)[]
@@ -38,13 +46,15 @@ function createPositionStore(
     });
   };
 
-  const observer = new ResizeObserver(() => {
+  const updatePositions = () => {
     const newPositions = calculatePositions();
-    if (JSON.stringify(newPositions) !== JSON.stringify(positions)) {
+    if (!arraysEqual(newPositions, positions)) {
       positions = newPositions;
       listeners.forEach((l) => l());
     }
-  });
+  };
+
+  const observer = new ResizeObserver(updatePositions);
 
   let observing = false;
 
@@ -57,14 +67,7 @@ function createPositionStore(
         if (zone) {
           positions = calculatePositions();
           observer.observe(zone);
-          // Also observe window resize
-          window.addEventListener('resize', () => {
-            const newPositions = calculatePositions();
-            if (JSON.stringify(newPositions) !== JSON.stringify(positions)) {
-              positions = newPositions;
-              listeners.forEach((l) => l());
-            }
-          });
+          window.addEventListener('resize', updatePositions);
           observing = true;
         }
       }
@@ -73,6 +76,7 @@ function createPositionStore(
         listeners.delete(listener);
         if (listeners.size === 0 && observing) {
           observer.disconnect();
+          window.removeEventListener('resize', updatePositions);
           observing = false;
         }
       };
@@ -141,7 +145,6 @@ export function PortLayer({
             .map((packet) => (
               <AnimatedPacket
                 key={packet.id}
-                id={packet.id}
                 targetX={mailboxPositions[packet.targetPort || 0] || 0}
                 onComplete={() => onAnimationComplete(packet.id, packet.targetPort || 0)}
               />
