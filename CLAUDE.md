@@ -5,7 +5,7 @@
 ## 技術スタック
 
 ### フロントエンド
-- **React 19** + TypeScript
+- **React 19.1.0** + TypeScript
 - **Vite 7** - ビルドツール
 - **Tailwind CSS 4** - スタイリング
 - **Framer Motion** - 2Dアニメーション
