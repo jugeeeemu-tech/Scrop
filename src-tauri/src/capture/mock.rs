@@ -11,17 +11,16 @@ const PACKET_GENERATION_INTERVAL_MS: u64 = 2000;
 pub struct MockCapture {
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
-    stats: Arc<tokio::sync::Mutex<CaptureStats>>,
-    port_count: u8,
+    stats: Arc<std::sync::Mutex<CaptureStats>>,
 }
 
 impl MockCapture {
-    pub fn new(port_count: u8) -> Self {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
         Self {
             is_running: Arc::new(AtomicBool::new(false)),
             packet_counter: Arc::new(AtomicU64::new(0)),
-            stats: Arc::new(tokio::sync::Mutex::new(CaptureStats::default())),
-            port_count,
+            stats: Arc::new(std::sync::Mutex::new(CaptureStats::default())),
         }
     }
 
@@ -29,8 +28,8 @@ impl MockCapture {
         self.is_running.load(Ordering::SeqCst)
     }
 
-    pub async fn get_stats(&self) -> CaptureStats {
-        self.stats.lock().await.clone()
+    pub fn get_stats(&self) -> CaptureStats {
+        self.stats.lock().unwrap().clone()
     }
 
     pub fn start(&self, app: AppHandle) {
@@ -41,12 +40,11 @@ impl MockCapture {
         let is_running = Arc::clone(&self.is_running);
         let packet_counter = Arc::clone(&self.packet_counter);
         let stats = Arc::clone(&self.stats);
-        let port_count = self.port_count;
 
         tokio::spawn(async move {
             while is_running.load(Ordering::SeqCst) {
                 let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
-                let packet = AnimatingPacket::generate(counter, port_count);
+                let packet = AnimatingPacket::generate(counter);
 
                 // Determine result immediately
                 let random: f64 = rand::random();
@@ -64,7 +62,7 @@ impl MockCapture {
 
                 // Update stats
                 {
-                    let mut s = stats.lock().await;
+                    let mut s = stats.lock().unwrap();
                     s.total_packets += 1;
                     match result {
                         PacketResult::NicDrop => s.nic_dropped += 1,
@@ -88,8 +86,8 @@ impl MockCapture {
         self.is_running.store(false, Ordering::SeqCst);
     }
 
-    pub async fn reset(&self) {
+    pub fn reset(&self) {
         self.packet_counter.store(0, Ordering::SeqCst);
-        *self.stats.lock().await = CaptureStats::default();
+        *self.stats.lock().unwrap() = CaptureStats::default();
     }
 }

@@ -53,7 +53,7 @@ pub struct AnimatingPacket {
 }
 
 impl AnimatingPacket {
-    pub fn generate(counter: u64, _port_count: u8) -> Self {
+    pub fn generate(counter: u64) -> Self {
         use rand::Rng;
         let mut rng = rand::rng();
 

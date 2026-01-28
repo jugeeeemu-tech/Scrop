@@ -1,3 +1,4 @@
 pub mod types;
 
-pub use types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
+#[allow(unused_imports)]
+pub use types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult, Protocol};

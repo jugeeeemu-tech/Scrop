@@ -1,0 +1,11 @@
+[package]
+name = "scrop-common"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+user = ["serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
