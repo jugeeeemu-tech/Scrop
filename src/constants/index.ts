@@ -33,9 +33,6 @@ export function getPortKey(portInfo: PortInfo): number {
 
 export const DEFAULT_PORTS: PortInfo[] = [
   { type: 'port', port: 80, label: 'HTTP' },
-  { type: 'port', port: 443, label: 'HTTPS' },
-  { type: 'port', port: 22, label: 'SSH' },
-  { type: 'port', port: 8080, label: 'Proxy' },
   { type: 'etc', label: 'Other' },
 ];
 
