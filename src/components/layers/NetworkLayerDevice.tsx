@@ -42,7 +42,7 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
             key={packets[packets.length - 5 + index]?.id || index}
             className={cn(
               'absolute w-10 h-10 rounded-lg border-2 border-destructive bg-card flex items-center justify-center',
-              'transition-all duration-300'
+              !isDropStreamMode && 'transition-all duration-300'
             )}
             style={{
               bottom: `${index * 4}px`,
