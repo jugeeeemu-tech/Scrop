@@ -166,10 +166,8 @@ export function PortLayer({
               <PacketStream targetX={mailboxPositions[port] || 0} />
             </StreamFadeOut>
           ))}
-          {/* Individual packet animations - skip for actively streaming ports */}
-          {animatingPackets
-            .filter((packet) => !streamingPorts.includes(packet.targetPort || 0))
-            .map((packet) => (
+          {/* Individual packet animations */}
+          {animatingPackets.map((packet) => (
               <AnimatedPacket
                 key={packet.id}
                 targetX={mailboxPositions[packet.targetPort || 0] || 0}
