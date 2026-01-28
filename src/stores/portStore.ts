@@ -12,6 +12,7 @@ type Listener = () => void;
 
 const STORAGE_KEY = 'scrop:ports';
 
+
 function loadPorts(): PortInfo[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -76,20 +77,37 @@ export function getPorts(): PortInfo[] {
   return state.ports;
 }
 
-/** Add a new empty port before the etc entry, enter editing mode */
+/** 未使用のランダムポート番号を生成 */
+function randomUnusedPort(usedPorts: Set<number>): number | null {
+  // 有効ポート数 65535 に対して全部使い切ることはまずないが一応チェック
+  if (usedPorts.size >= 65535) return null;
+  let port: number;
+  do {
+    port = Math.floor(Math.random() * 65535) + 1;
+  } while (usedPorts.has(port));
+  return port;
+}
+
+/** Add a new port with an auto-selected port number before the etc entry */
 export function addPort(): void {
-  const newPort: PortInfo = { type: 'port', port: 0, label: '' };
+  const usedPorts = new Set(
+    state.ports.filter((p) => p.type === 'port').map((p) => p.port)
+  );
+  const candidate = randomUnusedPort(usedPorts);
+  if (candidate === null) return;
+
+  const newPort: PortInfo = {
+    type: 'port',
+    port: candidate,
+    label: SERVICE_NAMES[candidate] ?? '',
+  };
   const etcIndex = state.ports.length - 1;
   const newPorts = [
     ...state.ports.slice(0, etcIndex),
     newPort,
     ...state.ports.slice(etcIndex),
   ];
-  state = {
-    ports: newPorts,
-    editingIndex: etcIndex, // The new port is at the old etc position
-    editingField: 'port',
-  };
+  state = { ...state, ports: newPorts, editingIndex: null, editingField: null };
   savePorts(newPorts);
   emitChange();
 }
