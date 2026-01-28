@@ -30,6 +30,7 @@ function App() {
         packetCount={store.packetCounter}
         onToggleCapture={toggleCapture}
         onReset={resetCapture}
+        error={store.error}
       />
 
       <main>

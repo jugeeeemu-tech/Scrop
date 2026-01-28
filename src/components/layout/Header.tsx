@@ -1,4 +1,4 @@
-import { Activity, Pause, Play, RotateCcw } from 'lucide-react';
+import { Activity, AlertCircle, Pause, Play, RotateCcw } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface HeaderProps {
@@ -6,12 +6,13 @@ interface HeaderProps {
   packetCount: number;
   onToggleCapture: () => void;
   onReset: () => void;
+  error?: string | null;
 }
 
-export function Header({ isCapturing, packetCount, onToggleCapture, onReset }: HeaderProps) {
+export function Header({ isCapturing, packetCount, onToggleCapture, onReset, error }: HeaderProps) {
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 h-[var(--header-height)] bg-background/80 backdrop-blur-sm border-b border-border">
-      <div className="h-full max-w-6xl mx-auto px-6 flex items-center justify-between">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-sm border-b border-border">
+      <div className="h-[var(--header-height)] max-w-6xl mx-auto px-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Activity className="w-5 h-5 text-foreground" />
           <span className="font-medium text-foreground">Scrop</span>
@@ -43,6 +44,15 @@ export function Header({ isCapturing, packetCount, onToggleCapture, onReset }: H
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-destructive text-destructive-foreground px-6 py-2">
+          <div className="max-w-6xl mx-auto flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span className="text-sm">{error}</span>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

@@ -101,6 +101,13 @@ function emitChange() {
   listeners.forEach((listener) => listener());
 }
 
+function formatError(err: unknown, userMessage: string): string {
+  if (import.meta.env.DEV) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  return userMessage;
+}
+
 function setNicActive(active: boolean) {
   store = { ...store, nicActive: active };
   emitChange();
@@ -222,7 +229,7 @@ async function startCapture(): Promise<void> {
     emitChange();
   } catch (err) {
     console.error('Failed to start capture:', err);
-    store = { ...store, error: err instanceof Error ? err.message : String(err) };
+    store = { ...store, error: formatError(err, 'キャプチャの開始に失敗しました') };
     emitChange();
   }
 }
@@ -235,7 +242,7 @@ async function stopCapture(): Promise<void> {
     emitChange();
   } catch (err) {
     console.error('Failed to stop capture:', err);
-    store = { ...store, error: err instanceof Error ? err.message : String(err) };
+    store = { ...store, error: formatError(err, 'キャプチャの停止に失敗しました') };
     emitChange();
   }
 }
@@ -263,7 +270,7 @@ export async function resetCapture(): Promise<void> {
     await startCapture();
   } catch (err) {
     console.error('Failed to reset capture:', err);
-    store = { ...store, error: err instanceof Error ? err.message : String(err) };
+    store = { ...store, error: formatError(err, 'リセットに失敗しました') };
     emitChange();
   }
 }
