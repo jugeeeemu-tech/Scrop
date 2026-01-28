@@ -9,8 +9,12 @@ export const PACKET_GENERATION_INTERVAL = 2000;
 
 // Stream mode (rate-based)
 export const STREAM_MODE_RATE_WINDOW = 1000;  // ms - レート計算ウィンドウ
-export const STREAM_MODE_RATE_THRESHOLD = 5;   // この秒間パケット数以上でストリームモード
+export const STREAM_MODE_RATE_THRESHOLD = 5;   // この秒間パケット数以上でストリームモード突入
+export const STREAM_MODE_RATE_EXIT_THRESHOLD = 3; // この秒間パケット数未満でストリームモード離脱（ヒステリシス）
 export const STREAM_PACKET_COUNT = 4;          // ストリームアニメーションの同時表示数
+
+// Stream drain timing (ms) - コンテナopacityのフェードアウト時間 & ドレインタイマー
+export const STREAM_DRAIN_DURATION = 500;
 
 // Storage limits
 export const MAX_STORED_DROPPED_PACKETS = 50;

@@ -1,6 +1,7 @@
 import { NetworkLayerDevice } from './NetworkLayerDevice';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
+import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
 import { useLayerCenterX } from '../../hooks';
 import type { AnimatingPacket } from '../../types';
@@ -52,10 +53,9 @@ export function NetworkLayer({
 
       {/* Animation zone */}
       <div ref={animationZoneRef} className="relative h-24 max-w-4xl mx-auto">
-        {isPacketStreamMode && (
+        <StreamFadeOut active={isPacketStreamMode}>
           <PacketStream targetX={centerX} />
-        )}
-        {/* Individual packet animations - always show existing ones even in stream mode to let them complete */}
+        </StreamFadeOut>
         {animatingPackets.map((packet) => (
           <AnimatedPacket
             key={packet.id}

@@ -1,8 +1,9 @@
 import { Mailbox } from '../port/Mailbox';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
+import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
-import { useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AnimatingPacket, PortInfo } from '../../types';
 
 interface PortLayerProps {
@@ -117,6 +118,24 @@ export function PortLayer({
     () => EMPTY_POSITIONS // Server snapshot - must return same reference
   );
 
+  // Track ports that need visible stream (active or fading out)
+  const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>([]);
+
+  useEffect(() => {
+    setVisibleStreamPorts((prev) => {
+      // Merge: keep ports already visible + add new streaming ports
+      const combined = [...new Set([...prev, ...streamingPorts])];
+      if (combined.length === prev.length && combined.every((p, i) => p === prev[i])) {
+        return prev;
+      }
+      return combined;
+    });
+  }, [streamingPorts]);
+
+  const handleFadeComplete = (port: number) => {
+    setVisibleStreamPorts((prev) => prev.filter((p) => p !== port));
+  };
+
   return (
     <section className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
       <div className="flex-1 flex flex-col justify-center max-w-4xl mx-auto w-full">
@@ -137,11 +156,17 @@ export function PortLayer({
 
         {/* Animation zone - packets rising from below */}
         <div ref={animationZoneRef} className="relative h-32">
-          {/* Stream mode: show streams for ports that exceed rate threshold */}
-          {streamingPorts.map((portIndex) => (
-            <PacketStream key={`stream-${portIndex}`} targetX={mailboxPositions[portIndex] || 0} />
+          {/* Stream mode: show fading streams for ports that are active or fading */}
+          {visibleStreamPorts.map((port) => (
+            <StreamFadeOut
+              key={`stream-${port}`}
+              active={streamingPorts.includes(port)}
+              onFadeComplete={() => handleFadeComplete(port)}
+            >
+              <PacketStream targetX={mailboxPositions[port] || 0} />
+            </StreamFadeOut>
           ))}
-          {/* Individual packet animations - skip for streaming ports to avoid overlap */}
+          {/* Individual packet animations - skip for actively streaming ports */}
           {animatingPackets
             .filter((packet) => !streamingPorts.includes(packet.targetPort || 0))
             .map((packet) => (

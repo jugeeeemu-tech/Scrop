@@ -3,6 +3,7 @@ import { Shield, Cpu, Package } from 'lucide-react';
 import { useState } from 'react';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 import { DropStream } from '../packet/DropStream';
+import { StreamFadeOut } from '../packet/StreamFadeOut';
 import type { AnimatingPacket } from '../../types';
 
 interface DroppedPileProps {
@@ -21,17 +22,16 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
     <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
       {/* Drop animations - positioned at the center of the pile */}
       <div className="absolute bottom-4 left-4 z-20">
-        {isDropStreamMode ? (
+        <StreamFadeOut active={isDropStreamMode}>
           <DropStream />
-        ) : (
-          dropAnimations.map((packet) => (
-            <DroppedPacketAnimation
-              key={packet.id}
-              direction="right"
-              onComplete={() => onDropAnimationComplete(packet.id)}
-            />
-          ))
-        )}
+        </StreamFadeOut>
+        {dropAnimations.map((packet) => (
+          <DroppedPacketAnimation
+            key={packet.id}
+            direction="right"
+            onComplete={() => onDropAnimationComplete(packet.id)}
+          />
+        ))}
       </div>
 
       {/* Stacked packages visualization - always maintain fixed width */}

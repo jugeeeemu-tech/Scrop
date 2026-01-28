@@ -20,15 +20,6 @@ function App() {
   const store = usePacketStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
 
-  // Get stream mode flags directly from store
-  const {
-    deliveredStreamPorts,
-    isNicDropStreamMode,
-    isFwDropStreamMode,
-    isIncomingStreamMode,
-    isNicToFwStreamMode,
-  } = store;
-
   return (
     <div className="min-h-screen bg-background">
       <Header
@@ -45,7 +36,7 @@ function App() {
           deliveredPackets={store.deliveredPackets}
           animatingPackets={store.fwToPortPackets}
           onAnimationComplete={handleFwToPortComplete}
-          streamingPorts={deliveredStreamPorts}
+          streamingPorts={store.streamingPorts}
         />
 
         <FWLayer
@@ -55,8 +46,8 @@ function App() {
           risingPackets={store.nicToFwPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'fw')}
           onRisingComplete={handleNicToFwComplete}
-          isDropStreamMode={isFwDropStreamMode}
-          isPacketStreamMode={isNicToFwStreamMode}
+          isDropStreamMode={store.isFwDropStreamMode}
+          isPacketStreamMode={store.isNicToFwStreamMode}
         />
 
         <NICLayer
@@ -66,8 +57,8 @@ function App() {
           incomingPackets={store.incomingPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
           onIncomingComplete={handleIncomingComplete}
-          isDropStreamMode={isNicDropStreamMode}
-          isPacketStreamMode={isIncomingStreamMode}
+          isDropStreamMode={store.isNicDropStreamMode}
+          isPacketStreamMode={store.isIncomingStreamMode}
         />
       </main>
 

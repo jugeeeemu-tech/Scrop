@@ -35,9 +35,9 @@ export function StreamAnimation({ variant, targetX }: StreamAnimationProps) {
     );
   }
 
-  // Drop variant - items positioned at bottom-0 left-0, animated with pixel-based translateX
+  // Drop variant
   return (
-    <>
+    <div>
       {Array.from({ length: STREAM_PACKET_COUNT }, (_, index) => (
         <div
           key={index}
@@ -50,7 +50,7 @@ export function StreamAnimation({ variant, targetX }: StreamAnimationProps) {
           <Package className="w-3 h-3 text-white" />
         </div>
       ))}
-    </>
+    </div>
   );
 }
 

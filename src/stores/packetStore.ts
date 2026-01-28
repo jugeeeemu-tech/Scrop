@@ -7,6 +7,7 @@ import {
   LAYER_TRANSITION_DURATION,
   STREAM_MODE_RATE_WINDOW,
   STREAM_MODE_RATE_THRESHOLD,
+  STREAM_MODE_RATE_EXIT_THRESHOLD,
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
 } from '../constants';
@@ -67,7 +68,7 @@ export interface PacketStoreState {
   // Stream mode states (calculated internally, consumed by UI)
   isIncomingStreamMode: boolean;
   isNicToFwStreamMode: boolean;
-  deliveredStreamPorts: number[];
+  streamingPorts: number[];
   isNicDropStreamMode: boolean;
   isFwDropStreamMode: boolean;
 }
@@ -122,7 +123,7 @@ function createInitialStore(portCount: number): PacketStoreState {
     error: null,
     isIncomingStreamMode: false,
     isNicToFwStreamMode: false,
-    deliveredStreamPorts: [],
+    streamingPorts: [],
     isNicDropStreamMode: false,
     isFwDropStreamMode: false,
   };
@@ -141,13 +142,13 @@ function formatError(err: unknown, userMessage: string): string {
 
 function getRate(times: number[]): number {
   const now = Date.now();
-  while (times.length > 0 && now - times[0] > STREAM_MODE_RATE_WINDOW) {
+  while (times.length > 0 && now - times[0] >= STREAM_MODE_RATE_WINDOW) {
     times.shift();
   }
   return times.length;
 }
 
-function getDeliveredStreamPorts(): number[] {
+function getActiveStreamPorts(): number[] {
   const ports: number[] = [];
   for (const portStr of Object.keys(recentDeliveredTimesPerPort)) {
     const port = Number(portStr);
@@ -179,20 +180,41 @@ function clearRateTimes() {
 
 type PacketResult = 'delivered' | 'nic-drop' | 'fw-drop';
 
+/**
+ * 定期的にレートをチェックし、exit閾値を下回ったらストリームモードを即座にOFFにする
+ * デバウンスではなく定期実行（タイマーが既にあればスキップ）
+ */
 function scheduleRateWindowUpdate() {
-  if (rateWindowTimer) clearTimeout(rateWindowTimer);
+  if (rateWindowTimer) return;
   rateWindowTimer = setTimeout(() => {
     rateWindowTimer = null;
-    // Update stream mode flags based on current rates
+
+    const nextIncoming = store.isIncomingStreamMode && getRate(recentIncomingTimes) >= STREAM_MODE_RATE_EXIT_THRESHOLD;
+    const nextNicToFw = store.isNicToFwStreamMode && getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_EXIT_THRESHOLD;
+    const nextNicDrop = store.isNicDropStreamMode && getRate(recentNicDropTimes) >= STREAM_MODE_RATE_EXIT_THRESHOLD;
+    const nextFwDrop = store.isFwDropStreamMode && getRate(recentFwDropTimes) >= STREAM_MODE_RATE_EXIT_THRESHOLD;
+
+    // Per-port exit check
+    const nextStreamingPorts = store.streamingPorts.filter((port) => {
+      const portRate = recentDeliveredTimesPerPort[port] ? getRate(recentDeliveredTimesPerPort[port]) : 0;
+      return portRate >= STREAM_MODE_RATE_EXIT_THRESHOLD;
+    });
+
     store = {
       ...store,
-      isIncomingStreamMode: getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD,
-      isNicToFwStreamMode: getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD,
-      deliveredStreamPorts: getDeliveredStreamPorts(),
-      isNicDropStreamMode: getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD,
-      isFwDropStreamMode: getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD,
+      isIncomingStreamMode: nextIncoming,
+      isNicToFwStreamMode: nextNicToFw,
+      isNicDropStreamMode: nextNicDrop,
+      isFwDropStreamMode: nextFwDrop,
+      streamingPorts: nextStreamingPorts,
     };
     emitChange();
+
+    // まだストリームモードのphaseがあれば再スケジュール
+    const hasActive = nextIncoming || nextNicToFw || nextNicDrop || nextFwDrop || nextStreamingPorts.length > 0;
+    if (hasActive) {
+      scheduleRateWindowUpdate();
+    }
   }, STREAM_MODE_RATE_WINDOW);
 }
 
@@ -215,15 +237,15 @@ function processNIC(packet: AnimatingPacket, result: PacketResult, generation: n
 
   if (result === 'nic-drop') {
     recentNicDropTimes.push(now);
-    const isNicDropStream = getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+    const isAboveThreshold = getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+    const isStreamMode = isAboveThreshold || store.isNicDropStreamMode;
 
     store = {
       ...store,
       nicActive: true,
-      isNicDropStreamMode: isNicDropStream,
+      isNicDropStreamMode: isStreamMode,
       nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-      // ストリームでなければドロップアニメーションも追加
-      ...(isNicDropStream ? {} : {
+      ...(isStreamMode ? {} : {
         nicDropAnimations: [...store.nicDropAnimations, packet],
       }),
     };
@@ -233,10 +255,11 @@ function processNIC(packet: AnimatingPacket, result: PacketResult, generation: n
 
   // NIC通過
   recentNicToFwTimes.push(now);
-  const isNicToFwStream = getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD;
+  const isNicToFwAbove = getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD;
+  const isNicToFwStream = isNicToFwAbove || store.isNicToFwStreamMode;
 
   if (isNicToFwStream) {
-    // ストリーム: NIC→FWアニメーションをスキップ、直接FW処理へ
+    // ストリーム中: NIC→FWアニメーションをスキップ、直接FW処理へ
     store = { ...store, nicActive: true, isNicToFwStreamMode: true };
     emitChange();
     processFW(packet, result, generation);
@@ -245,7 +268,6 @@ function processNIC(packet: AnimatingPacket, result: PacketResult, generation: n
     store = {
       ...store,
       nicActive: true,
-      isNicToFwStreamMode: false,
       nicToFwPackets: [...store.nicToFwPackets, packet],
     };
     emitChange();
@@ -272,14 +294,15 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
 
   if (result === 'fw-drop') {
     recentFwDropTimes.push(now);
-    const isFwDropStream = getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+    const isAboveThreshold = getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+    const isStreamMode = isAboveThreshold || store.isFwDropStreamMode;
 
     store = {
       ...store,
       fwActive: true,
-      isFwDropStreamMode: isFwDropStream,
+      isFwDropStreamMode: isStreamMode,
       firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-      ...(isFwDropStream ? {} : {
+      ...(isStreamMode ? {} : {
         fwDropAnimations: [...store.fwDropAnimations, packet],
       }),
     };
@@ -290,15 +313,16 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
   // Delivered
   const port = packet.targetPort ?? 0;
   pushDeliveredTime(port, now);
-  const newDeliveredStreamPorts = getDeliveredStreamPorts();
-  const isPortStreaming = newDeliveredStreamPorts.includes(port);
+  const activePorts = getActiveStreamPorts();
+  const updatedStreamingPorts = [...new Set([...store.streamingPorts, ...activePorts])];
+  const isPortStreaming = updatedStreamingPorts.includes(port);
 
   if (isPortStreaming) {
-    // ポートがストリーム: アニメーションスキップ、直接deliveredPacketsへ
+    // ポートがストリーム中: アニメーションスキップ、直接deliveredPacketsへ
     store = {
       ...store,
       fwActive: true,
-      deliveredStreamPorts: newDeliveredStreamPorts,
+      streamingPorts: updatedStreamingPorts,
       deliveredPackets: {
         ...store.deliveredPackets,
         [port]: [...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)), packet],
@@ -309,7 +333,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
     store = {
       ...store,
       fwActive: true,
-      deliveredStreamPorts: newDeliveredStreamPorts,
+      streamingPorts: updatedStreamingPorts,
       fwToPortPackets: [...store.fwToPortPackets, packet],
     };
   }
@@ -326,12 +350,14 @@ function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
 
   // Incomingレート追跡
   recentIncomingTimes.push(Date.now());
-  const isIncomingStream = getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD;
+  const isAboveThreshold = getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD;
+  // Enter閾値以上 or 既にストリームモード → ストリーム維持（exitはscheduleRateWindowUpdateが担当）
+  const isStreamMode = isAboveThreshold || store.isIncomingStreamMode;
 
   scheduleRateWindowUpdate();
 
-  if (isIncomingStream) {
-    // ストリーム: incomingアニメーションをスキップ、直接NIC処理へ
+  if (isStreamMode) {
+    // ストリーム中: incomingアニメーションをスキップ、直接NIC処理へ
     store = {
       ...store,
       isIncomingStreamMode: true,
@@ -343,7 +369,6 @@ function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
     // 通常: incomingPacketsに追加、遅延後にNIC処理
     store = {
       ...store,
-      isIncomingStreamMode: false,
       incomingPackets: [...store.incomingPackets, packet],
       packetCounter: store.packetCounter + 1,
     };
