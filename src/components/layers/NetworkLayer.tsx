@@ -1,5 +1,6 @@
 import { NetworkLayerDevice } from './NetworkLayerDevice';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
+import { PacketStream } from '../packet/PacketStream';
 import { ScrollHint } from '../common/ScrollHint';
 import { useLayerCenterX } from '../../hooks';
 import type { AnimatingPacket } from '../../types';
@@ -49,13 +50,17 @@ export function NetworkLayer({
 
       {/* Animation zone */}
       <div ref={animationZoneRef} className="relative h-24 max-w-4xl mx-auto">
-        {animatingPackets.map((packet) => (
-          <AnimatedPacket
-            key={packet.id}
-            targetX={centerX}
-            onComplete={() => onAnimatingComplete(packet.id)}
-          />
-        ))}
+        {isDropStreamMode ? (
+          animatingPackets.length > 0 && <PacketStream targetX={centerX} />
+        ) : (
+          animatingPackets.map((packet) => (
+            <AnimatedPacket
+              key={packet.id}
+              targetX={centerX}
+              onComplete={() => onAnimatingComplete(packet.id)}
+            />
+          ))
+        )}
       </div>
 
       {showScrollHint && <ScrollHint className="pb-4" />}
