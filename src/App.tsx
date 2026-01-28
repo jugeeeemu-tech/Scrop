@@ -33,8 +33,8 @@ function App() {
 
   // Sync packetStore when ports change
   useEffect(() => {
-    syncPortConfig(portStore.ports.length);
-  }, [portStore.ports.length]);
+    syncPortConfig(portStore.ports);
+  }, [portStore.ports]);
 
   return (
     <div className="min-h-screen bg-background">

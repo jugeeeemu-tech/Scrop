@@ -6,6 +6,7 @@ import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AnimatingPacket, PortInfo } from '../../types';
+import { ETC_PORT_KEY, getPortKey } from '../../constants';
 
 interface PortLayerProps {
   ports: PortInfo[];
@@ -154,6 +155,14 @@ export function PortLayer({
     () => EMPTY_POSITIONS // Server snapshot - must return same reference
   );
 
+  // Helper: ポートキーから配列インデックスへの逆変換
+  const portKeyToIndex = (portKey: number): number => {
+    if (portKey === ETC_PORT_KEY) {
+      return ports.findIndex((p) => p.type === 'etc');
+    }
+    return ports.findIndex((p) => p.type === 'port' && p.port === portKey);
+  };
+
   // Track ports that need visible stream (active or fading out)
   const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>([]);
 
@@ -192,9 +201,9 @@ export function PortLayer({
                 <Mailbox
                   ref={(el) => setMailboxRef(index, el)}
                   portInfo={portInfo}
-                  packets={deliveredPackets[index] || []}
-                  packetCount={deliveredCounterPerPort[index] || 0}
-                  isActive={animatingPackets.some((p) => p.targetPort === index)}
+                  packets={deliveredPackets[getPortKey(portInfo)] || []}
+                  packetCount={deliveredCounterPerPort[getPortKey(portInfo)] || 0}
+                  isActive={animatingPackets.some((p) => p.targetPort === getPortKey(portInfo))}
                   isEditing={editingIndex === index}
                   editingField={editingIndex === index ? editingField : null}
                   onPortChange={(port) => onPortChange(index, port)}
@@ -218,15 +227,15 @@ export function PortLayer({
               active={streamingPorts.includes(port)}
               onFadeComplete={() => handleFadeComplete(port)}
             >
-              <PacketStream targetX={mailboxPositions[port] || 0} />
+              <PacketStream targetX={mailboxPositions[portKeyToIndex(port)] || 0} />
             </StreamFadeOut>
           ))}
           {/* Individual packet animations */}
           {animatingPackets.map((packet) => (
               <AnimatedPacket
                 key={packet.id}
-                targetX={mailboxPositions[packet.targetPort || 0] || 0}
-                onComplete={() => onAnimationComplete(packet.id, packet.targetPort || 0)}
+                targetX={mailboxPositions[portKeyToIndex(packet.targetPort ?? ETC_PORT_KEY)] || 0}
+                onComplete={() => onAnimationComplete(packet.id, packet.targetPort ?? ETC_PORT_KEY)}
               />
             ))}
         </div>

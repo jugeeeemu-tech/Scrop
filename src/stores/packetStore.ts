@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import type { AnimatingPacket, CapturedPacket } from '../types';
+import type { AnimatingPacket, CapturedPacket, PortInfo } from '../types';
 import {
   LAYER_ACTIVE_FLASH_DURATION,
   LAYER_TRANSITION_DURATION,
@@ -9,6 +9,8 @@ import {
   STREAM_MODE_RATE_EXIT_THRESHOLD,
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
+  ETC_PORT_KEY,
+  getPortKey,
 } from '../constants';
 import { getPorts } from './portStore';
 import {
@@ -22,21 +24,19 @@ import {
 const isTauri = '__TAURI_INTERNALS__' in window;
 
 /**
- * 宛先ポート番号からポストのインデックスを計算
- * DEFAULT_PORTSに該当するポートがあればそのインデックス、なければetc
+ * 宛先ポート番号からポートキーを計算
+ * 設定済みポートに該当すればそのポート番号、なければ ETC_PORT_KEY
  */
 function resolveTargetPort(destPort: number): number {
   const ports = getPorts();
-  const etcIndex = ports.length - 1;
 
-  for (let i = 0; i < ports.length; i++) {
-    const portInfo = ports[i];
+  for (const portInfo of ports) {
     if (portInfo.type === 'port' && portInfo.port === destPort) {
-      return i;
+      return portInfo.port;
     }
   }
 
-  return etcIndex;
+  return ETC_PORT_KEY;
 }
 
 // Store state type
@@ -83,11 +83,10 @@ export interface PacketStoreState {
 type Listener = () => void;
 
 // Module-level state
-let store: PacketStoreState = createInitialStore(4);
+let store: PacketStoreState = createInitialStore(getPorts());
 const listeners = new Set<Listener>();
 let unlistenPromise: Promise<UnlistenFn> | null = null;
 let mockUnsubscribe: (() => void) | null = null;
-let portCount = 4;
 let initialized = false;
 let storeGeneration = 0;
 
@@ -105,30 +104,30 @@ const activeTimers = {
   fw: null as ReturnType<typeof setTimeout> | null,
 };
 
-function createInitialDeliveredPackets(count: number): Record<number, AnimatingPacket[]> {
+function createInitialDeliveredPackets(ports: PortInfo[]): Record<number, AnimatingPacket[]> {
   const result: Record<number, AnimatingPacket[]> = {};
-  for (let i = 0; i < count; i++) {
-    result[i] = [];
+  for (const portInfo of ports) {
+    result[getPortKey(portInfo)] = [];
   }
   return result;
 }
 
-function createInitialDeliveredCounterPerPort(count: number): Record<number, number> {
+function createInitialDeliveredCounterPerPort(ports: PortInfo[]): Record<number, number> {
   const result: Record<number, number> = {};
-  for (let i = 0; i < count; i++) {
-    result[i] = 0;
+  for (const portInfo of ports) {
+    result[getPortKey(portInfo)] = 0;
   }
   return result;
 }
 
-function createInitialStore(portCount: number): PacketStoreState {
+function createInitialStore(ports: PortInfo[]): PacketStoreState {
   return {
     deliveredCounter: 0,
     droppedCounter: 0,
     nicDroppedCounter: 0,
     fwDroppedCounter: 0,
-    deliveredCounterPerPort: createInitialDeliveredCounterPerPort(portCount),
-    deliveredPackets: createInitialDeliveredPackets(portCount),
+    deliveredCounterPerPort: createInitialDeliveredCounterPerPort(ports),
+    deliveredPackets: createInitialDeliveredPackets(ports),
     firewallDropped: [],
     nicDropped: [],
     incomingPackets: [],
@@ -478,8 +477,7 @@ export async function resetCapture(): Promise<void> {
     // Increment generation to invalidate pending callbacks
     storeGeneration++;
     clearRateTimes();
-    portCount = getPorts().length;
-    store = createInitialStore(portCount);
+    store = createInitialStore(getPorts());
     emitChange();
     // Restart capture after reset
     await startCapture();
@@ -495,7 +493,7 @@ export function getSnapshot(): PacketStoreState {
 }
 
 export function getServerSnapshot(): PacketStoreState {
-  return createInitialStore(portCount);
+  return createInitialStore(getPorts());
 }
 
 export function subscribeToPackets(isCapturing: boolean): void {
@@ -521,16 +519,24 @@ export function subscribeToPackets(isCapturing: boolean): void {
   }
 }
 
-export function syncPortConfig(newPortCount: number): void {
-  if (newPortCount === portCount) return;
-  // Extend deliveredPackets and deliveredCounterPerPort for new ports
+export function syncPortConfig(ports: PortInfo[]): void {
   const newDeliveredPackets = { ...store.deliveredPackets };
   const newCounterPerPort = { ...store.deliveredCounterPerPort };
-  for (let i = portCount; i < newPortCount; i++) {
-    if (!(i in newDeliveredPackets)) newDeliveredPackets[i] = [];
-    if (!(i in newCounterPerPort)) newCounterPerPort[i] = 0;
+  // 現在のポート群のキーセットを作成
+  const currentKeys = new Set(ports.map(getPortKey));
+  // 新しいポートのエントリを確保
+  for (const key of currentKeys) {
+    if (!(key in newDeliveredPackets)) newDeliveredPackets[key] = [];
+    if (!(key in newCounterPerPort)) newCounterPerPort[key] = 0;
   }
-  portCount = newPortCount;
+  // 削除されたポートのデータを削除
+  for (const key of Object.keys(newDeliveredPackets)) {
+    const numKey = Number(key);
+    if (!currentKeys.has(numKey)) {
+      delete newDeliveredPackets[numKey];
+      delete newCounterPerPort[numKey];
+    }
+  }
   store = { ...store, deliveredPackets: newDeliveredPackets, deliveredCounterPerPort: newCounterPerPort };
   emitChange();
 }
@@ -593,6 +599,6 @@ export function clearAll(): void {
   // Increment generation to invalidate pending callbacks
   storeGeneration++;
   clearRateTimes();
-  store = createInitialStore(portCount);
+  store = createInitialStore(getPorts());
   emitChange();
 }

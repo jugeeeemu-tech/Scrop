@@ -23,6 +23,14 @@ export const MAX_STORED_DELIVERED_PACKETS = 20;
 // Port configuration
 import type { PortInfo } from '../types';
 
+/** etc ポートのキー値（ポート番号を持たないため -1 を使用） */
+export const ETC_PORT_KEY = -1;
+
+/** PortInfo からポートキーを取得する。port → port番号、etc → ETC_PORT_KEY */
+export function getPortKey(portInfo: PortInfo): number {
+  return portInfo.type === 'port' ? portInfo.port : ETC_PORT_KEY;
+}
+
 export const DEFAULT_PORTS: PortInfo[] = [
   { type: 'port', port: 80, label: 'HTTP' },
   { type: 'port', port: 443, label: 'HTTPS' },
