@@ -27,7 +27,6 @@ function DroppedPile({ packets, type, dropAnimations, onDropAnimationComplete, i
           dropAnimations.map((packet) => (
             <DroppedPacketAnimation
               key={packet.id}
-              id={packet.id}
               direction="right"
               onComplete={() => onDropAnimationComplete(packet.id)}
             />

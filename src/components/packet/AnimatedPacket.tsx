@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import { useRef } from 'react';
 
 interface AnimatedPacketProps {
-  id: string;
   targetX: number;
   onComplete: () => void;
 }
@@ -15,7 +14,7 @@ export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
   return (
     <motion.div
       className="absolute z-10"
-      style={{ left: targetX, x: '-50%' }}
+      style={{ left: targetX, x: '-50%', willChange: 'transform, opacity' }}
       initial={{ bottom: 0, opacity: 1, scale: 1 }}
       animate={{ bottom: '100%', opacity: 0, scale: 0.5 }}
       transition={{

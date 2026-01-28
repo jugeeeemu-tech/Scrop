@@ -52,7 +52,6 @@ export function NetworkLayer({
         {animatingPackets.map((packet) => (
           <AnimatedPacket
             key={packet.id}
-            id={packet.id}
             targetX={centerX}
             onComplete={() => onAnimatingComplete(packet.id)}
           />
