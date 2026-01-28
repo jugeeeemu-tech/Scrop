@@ -1,6 +1,6 @@
-import { cn } from '../../lib/utils';
 import { Package } from 'lucide-react';
-import { useState, useRef, type TransitionEvent } from 'react';
+import { motion } from 'framer-motion';
+import { useRef } from 'react';
 
 interface AnimatedPacketProps {
   id: string;
@@ -9,59 +9,35 @@ interface AnimatedPacketProps {
 }
 
 export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
-  const [phase, setPhase] = useState<'start' | 'rising' | 'delivered'>('start');
-  const completedRef = useRef(false);
-
-  // Trigger rising phase on first render via ref callback
-  const elementRef = useRef<HTMLDivElement | null>(null);
-  const hasStartedRef = useRef(false);
-
-  const setRef = (el: HTMLDivElement | null) => {
-    elementRef.current = el;
-    if (el && !hasStartedRef.current) {
-      hasStartedRef.current = true;
-      // Use requestAnimationFrame to ensure the 'start' styles are applied first
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          setPhase('rising');
-        });
-      });
-    }
-  };
-
-  const handleTransitionEnd = (e: TransitionEvent<HTMLDivElement>) => {
-    // Only trigger on the 'bottom' property ending (the main animation)
-    if (e.propertyName === 'bottom' && phase === 'rising' && !completedRef.current) {
-      completedRef.current = true;
-      setPhase('delivered');
-      onComplete();
-    }
-  };
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   return (
-    <div
-      ref={setRef}
-      className={cn(
-        'absolute transition-all ease-out z-10',
-        phase === 'delivered' ? 'duration-200' : 'duration-700',
-        phase === 'start' && 'bottom-0 opacity-100',
-        phase === 'rising' && 'bottom-full opacity-100',
-        phase === 'delivered' && 'bottom-full opacity-0 scale-50'
-      )}
-      style={{
-        left: targetX,
-        transform: 'translateX(-50%)',
+    <motion.div
+      className="absolute z-10"
+      style={{ left: targetX, x: '-50%' }}
+      initial={{ bottom: 0, opacity: 1, scale: 1 }}
+      animate={{ bottom: '100%', opacity: 0, scale: 0.5 }}
+      transition={{
+        duration: 0.9,
+        ease: 'easeOut',
+        bottom: { duration: 0.7 },
+        opacity: { delay: 0.7, duration: 0.2 },
+        scale: { delay: 0.7, duration: 0.2 },
       }}
-      onTransitionEnd={handleTransitionEnd}
+      onAnimationComplete={() => onCompleteRef.current()}
     >
-      <div
-        className={cn(
-          'w-10 h-10 bg-foreground rounded-lg shadow-lg flex items-center justify-center transition-transform',
-          phase === 'rising' && 'animate-pulse'
-        )}
+      <motion.div
+        className="w-10 h-10 bg-foreground rounded-lg shadow-lg flex items-center justify-center"
+        animate={{ scale: [1, 1.05, 1] }}
+        transition={{
+          duration: 0.5,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
       >
         <Package className="w-5 h-5 text-background" />
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
