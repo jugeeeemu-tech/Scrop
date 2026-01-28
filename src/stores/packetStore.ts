@@ -10,6 +10,15 @@ import {
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
 } from '../constants';
+import {
+  startMockCapture,
+  stopMockCapture,
+  resetMockCapture,
+  addPacketListener,
+} from '../mocks/packetGenerator';
+
+// Detect if running in Tauri environment
+const isTauri = '__TAURI_INTERNALS__' in window;
 
 /**
  * 宛先ポート番号からポストのインデックスを計算
@@ -54,6 +63,13 @@ export interface PacketStoreState {
 
   // Error state
   error: string | null;
+
+  // Stream mode states (calculated internally, consumed by UI)
+  isIncomingStreamMode: boolean;
+  isNicToFwStreamMode: boolean;
+  deliveredStreamPorts: number[];
+  isNicDropStreamMode: boolean;
+  isFwDropStreamMode: boolean;
 }
 
 type Listener = () => void;
@@ -62,12 +78,13 @@ type Listener = () => void;
 let store: PacketStoreState = createInitialStore(4);
 const listeners = new Set<Listener>();
 let unlistenPromise: Promise<UnlistenFn> | null = null;
+let mockUnsubscribe: (() => void) | null = null;
 let portCount = 4;
 let initialized = false;
 let storeGeneration = 0;
 
 // Rate tracking for stream mode
-const recentDeliveredTimes: number[] = [];
+const recentDeliveredTimesPerPort: Record<number, number[]> = {};
 const recentNicDropTimes: number[] = [];
 const recentFwDropTimes: number[] = [];
 const recentNicToFwTimes: number[] = [];
@@ -103,6 +120,11 @@ function createInitialStore(portCount: number): PacketStoreState {
     fwActive: false,
     isCapturing: false,
     error: null,
+    isIncomingStreamMode: false,
+    isNicToFwStreamMode: false,
+    deliveredStreamPorts: [],
+    isNicDropStreamMode: false,
+    isFwDropStreamMode: false,
   };
 }
 
@@ -125,8 +147,26 @@ function getRate(times: number[]): number {
   return times.length;
 }
 
+function getDeliveredStreamPorts(): number[] {
+  const ports: number[] = [];
+  for (const portStr of Object.keys(recentDeliveredTimesPerPort)) {
+    const port = Number(portStr);
+    if (getRate(recentDeliveredTimesPerPort[port]) >= STREAM_MODE_RATE_THRESHOLD) {
+      ports.push(port);
+    }
+  }
+  return ports;
+}
+
+function pushDeliveredTime(port: number, now: number) {
+  if (!recentDeliveredTimesPerPort[port]) recentDeliveredTimesPerPort[port] = [];
+  recentDeliveredTimesPerPort[port].push(now);
+}
+
 function clearRateTimes() {
-  recentDeliveredTimes.length = 0;
+  for (const key of Object.keys(recentDeliveredTimesPerPort)) {
+    delete recentDeliveredTimesPerPort[Number(key)];
+  }
   recentNicDropTimes.length = 0;
   recentFwDropTimes.length = 0;
   recentNicToFwTimes.length = 0;
@@ -137,255 +177,178 @@ function clearRateTimes() {
   }
 }
 
+type PacketResult = 'delivered' | 'nic-drop' | 'fw-drop';
+
 function scheduleRateWindowUpdate() {
   if (rateWindowTimer) clearTimeout(rateWindowTimer);
   rateWindowTimer = setTimeout(() => {
     rateWindowTimer = null;
+    // Update stream mode flags based on current rates
+    store = {
+      ...store,
+      isIncomingStreamMode: getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD,
+      isNicToFwStreamMode: getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD,
+      deliveredStreamPorts: getDeliveredStreamPorts(),
+      isNicDropStreamMode: getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD,
+      isFwDropStreamMode: getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD,
+    };
     emitChange();
   }, STREAM_MODE_RATE_WINDOW);
 }
 
 /**
- * ストリームモード時に、既存のアニメーションバッファを全て消費して履歴に移動
+ * NIC層の処理
+ * nic-drop: ドロップ履歴に追加（ストリーム時はドロップアニメーションスキップ）
+ * pass: ストリームならFW処理へ即座に進む、通常ならnicToFwアニメーション後にFW処理
  */
-function flushAnimationBuffers() {
-  // Flush fwToPortPackets → deliveredPackets
-  const newDelivered = { ...store.deliveredPackets };
-  for (const pkt of store.fwToPortPackets) {
-    const port = pkt.targetPort ?? 0;
-    newDelivered[port] = [
-      ...(newDelivered[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
-      pkt,
-    ];
-  }
+function processNIC(packet: AnimatingPacket, result: PacketResult, generation: number) {
+  if (generation !== storeGeneration) return;
 
-  // Flush nicDropAnimations → nicDropped
-  const newNicDropped = [
-    ...store.nicDropped,
-    ...store.nicDropAnimations,
-  ].slice(-MAX_STORED_DROPPED_PACKETS);
-
-  // Flush fwDropAnimations → firewallDropped
-  const newFwDropped = [
-    ...store.firewallDropped,
-    ...store.fwDropAnimations,
-  ].slice(-MAX_STORED_DROPPED_PACKETS);
-
-  store = {
-    ...store,
-    deliveredPackets: newDelivered,
-    fwToPortPackets: [],
-    nicDropAnimations: [],
-    fwDropAnimations: [],
-    incomingPackets: [],
-    nicToFwPackets: [],
-    nicDropped: newNicDropped,
-    firewallDropped: newFwDropped,
-  };
-}
-
-function setNicActive(active: boolean) {
-  store = { ...store, nicActive: active };
-  emitChange();
-}
-
-function setFwActive(active: boolean) {
-  store = { ...store, fwActive: active };
-  emitChange();
-}
-
-function processPacket(rawPacket: AnimatingPacket, result: 'delivered' | 'nic-drop' | 'fw-drop') {
-  // 振り分け先を計算
-  const targetPort = resolveTargetPort(rawPacket.destPort);
-  const packet = { ...rawPacket, targetPort };
   const now = Date.now();
 
-  // Capture current generation to detect stale callbacks
+  // NICアクティブフラッシュタイマー
+  if (activeTimers.nic) clearTimeout(activeTimers.nic);
+  activeTimers.nic = setTimeout(() => {
+    store = { ...store, nicActive: false };
+    emitChange();
+  }, LAYER_ACTIVE_FLASH_DURATION);
+
+  if (result === 'nic-drop') {
+    recentNicDropTimes.push(now);
+    const isNicDropStream = getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+
+    store = {
+      ...store,
+      nicActive: true,
+      isNicDropStreamMode: isNicDropStream,
+      nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+      // ストリームでなければドロップアニメーションも追加
+      ...(isNicDropStream ? {} : {
+        nicDropAnimations: [...store.nicDropAnimations, packet],
+      }),
+    };
+    emitChange();
+    return;
+  }
+
+  // NIC通過
+  recentNicToFwTimes.push(now);
+  const isNicToFwStream = getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD;
+
+  if (isNicToFwStream) {
+    // ストリーム: NIC→FWアニメーションをスキップ、直接FW処理へ
+    store = { ...store, nicActive: true, isNicToFwStreamMode: true };
+    emitChange();
+    processFW(packet, result, generation);
+  } else {
+    // 通常: nicToFwPacketsに追加、遅延後にFW処理
+    store = {
+      ...store,
+      nicActive: true,
+      isNicToFwStreamMode: false,
+      nicToFwPackets: [...store.nicToFwPackets, packet],
+    };
+    emitChange();
+    setTimeout(() => processFW(packet, result, generation), LAYER_TRANSITION_DURATION);
+  }
+}
+
+/**
+ * FW層の処理
+ * fw-drop: ドロップ履歴に追加（ストリーム時はドロップアニメーションスキップ）
+ * delivered: ポートがストリームならdeliveredPacketsへ直接、通常ならfwToPortアニメーション
+ */
+function processFW(packet: AnimatingPacket, result: PacketResult, generation: number) {
+  if (generation !== storeGeneration) return;
+
+  const now = Date.now();
+
+  // FWアクティブフラッシュタイマー
+  if (activeTimers.fw) clearTimeout(activeTimers.fw);
+  activeTimers.fw = setTimeout(() => {
+    store = { ...store, fwActive: false };
+    emitChange();
+  }, LAYER_ACTIVE_FLASH_DURATION);
+
+  if (result === 'fw-drop') {
+    recentFwDropTimes.push(now);
+    const isFwDropStream = getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+
+    store = {
+      ...store,
+      fwActive: true,
+      isFwDropStreamMode: isFwDropStream,
+      firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+      ...(isFwDropStream ? {} : {
+        fwDropAnimations: [...store.fwDropAnimations, packet],
+      }),
+    };
+    emitChange();
+    return;
+  }
+
+  // Delivered
+  const port = packet.targetPort ?? 0;
+  pushDeliveredTime(port, now);
+  const newDeliveredStreamPorts = getDeliveredStreamPorts();
+  const isPortStreaming = newDeliveredStreamPorts.includes(port);
+
+  if (isPortStreaming) {
+    // ポートがストリーム: アニメーションスキップ、直接deliveredPacketsへ
+    store = {
+      ...store,
+      fwActive: true,
+      deliveredStreamPorts: newDeliveredStreamPorts,
+      deliveredPackets: {
+        ...store.deliveredPackets,
+        [port]: [...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)), packet],
+      },
+    };
+  } else {
+    // 通常: fwToPortPacketsに追加してアニメーション
+    store = {
+      ...store,
+      fwActive: true,
+      deliveredStreamPorts: newDeliveredStreamPorts,
+      fwToPortPackets: [...store.fwToPortPackets, packet],
+    };
+  }
+  emitChange();
+}
+
+/**
+ * パケット処理のエントリポイント
+ * 各レイヤーが独立してストリーム判定を行い、ストリームなら即座に次の処理へ進む
+ */
+function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
+  const packet = { ...rawPacket, targetPort: resolveTargetPort(rawPacket.destPort) };
   const generation = storeGeneration;
 
-  // Schedule rate window expiry for UI update
+  // Incomingレート追跡
+  recentIncomingTimes.push(Date.now());
+  const isIncomingStream = getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD;
+
   scheduleRateWindowUpdate();
 
-  // Record incoming rate
-  recentIncomingTimes.push(now);
-  const incomingStreamMode = getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD;
-
-  if (incomingStreamMode) {
-    // Stream mode: skip incoming animation, go directly to NIC processing
-    flushAnimationBuffers();
+  if (isIncomingStream) {
+    // ストリーム: incomingアニメーションをスキップ、直接NIC処理へ
     store = {
       ...store,
+      isIncomingStreamMode: true,
       packetCounter: store.packetCounter + 1,
     };
-
-    // Flash NIC active
-    setNicActive(true);
-    if (activeTimers.nic) clearTimeout(activeTimers.nic);
-    activeTimers.nic = setTimeout(() => setNicActive(false), LAYER_ACTIVE_FLASH_DURATION);
-
-    if (result === 'nic-drop') {
-      recentNicDropTimes.push(now);
-      store = {
-        ...store,
-        nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-      };
-      emitChange();
-    } else {
-      recentNicToFwTimes.push(now);
-
-      // Flash FW active
-      setFwActive(true);
-      if (activeTimers.fw) clearTimeout(activeTimers.fw);
-      activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
-
-      if (result === 'fw-drop') {
-        recentFwDropTimes.push(now);
-        store = {
-          ...store,
-          firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-        };
-        emitChange();
-      } else {
-        recentDeliveredTimes.push(now);
-        const port = packet.targetPort ?? 0;
-        store = {
-          ...store,
-          deliveredPackets: {
-            ...store.deliveredPackets,
-            [port]: [
-              ...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
-              packet,
-            ],
-          },
-        };
-        emitChange();
-      }
-    }
+    emitChange();
+    processNIC(packet, result, generation);
   } else {
-    // Normal mode: animate through layers
+    // 通常: incomingPacketsに追加、遅延後にNIC処理
     store = {
       ...store,
+      isIncomingStreamMode: false,
       incomingPackets: [...store.incomingPackets, packet],
       packetCounter: store.packetCounter + 1,
     };
     emitChange();
-
-    // 2. After LAYER_TRANSITION_DURATION, process at NIC
-    setTimeout(() => {
-      if (generation !== storeGeneration) return;
-
-      setNicActive(true);
-      if (activeTimers.nic) clearTimeout(activeTimers.nic);
-      activeTimers.nic = setTimeout(() => setNicActive(false), LAYER_ACTIVE_FLASH_DURATION);
-
-      if (result === 'nic-drop') {
-        recentNicDropTimes.push(Date.now());
-        const nicDropStream = getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
-        if (nicDropStream) {
-          flushAnimationBuffers();
-          store = {
-            ...store,
-            nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-          };
-        } else {
-          store = {
-            ...store,
-            nicDropAnimations: [...store.nicDropAnimations, packet],
-            nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-          };
-        }
-        emitChange();
-      } else {
-        recentNicToFwTimes.push(Date.now());
-        const nicToFwStream = getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD;
-        if (nicToFwStream) {
-          flushAnimationBuffers();
-          // Skip nicToFw animation, go directly to FW processing
-          setFwActive(true);
-          if (activeTimers.fw) clearTimeout(activeTimers.fw);
-          activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
-
-          if (result === 'fw-drop') {
-            recentFwDropTimes.push(Date.now());
-            store = {
-              ...store,
-              firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-            };
-          } else {
-            recentDeliveredTimes.push(Date.now());
-            const port = packet.targetPort ?? 0;
-            store = {
-              ...store,
-              deliveredPackets: {
-                ...store.deliveredPackets,
-                [port]: [
-                  ...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
-                  packet,
-                ],
-              },
-            };
-          }
-          emitChange();
-        } else {
-          store = {
-            ...store,
-            nicToFwPackets: [...store.nicToFwPackets, packet],
-          };
-          emitChange();
-
-          // 3. After another delay, process at FW
-          setTimeout(() => {
-            if (generation !== storeGeneration) return;
-
-            setFwActive(true);
-            if (activeTimers.fw) clearTimeout(activeTimers.fw);
-            activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
-
-            if (result === 'fw-drop') {
-              recentFwDropTimes.push(Date.now());
-              const fwDropStream = getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
-              if (fwDropStream) {
-                flushAnimationBuffers();
-                store = {
-                  ...store,
-                  firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-                };
-              } else {
-                store = {
-                  ...store,
-                  fwDropAnimations: [...store.fwDropAnimations, packet],
-                  firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
-                };
-              }
-              emitChange();
-            } else {
-              recentDeliveredTimes.push(Date.now());
-              const deliveredStream = getRate(recentDeliveredTimes) >= STREAM_MODE_RATE_THRESHOLD;
-              if (deliveredStream) {
-                flushAnimationBuffers();
-                const port = packet.targetPort ?? 0;
-                store = {
-                  ...store,
-                  deliveredPackets: {
-                    ...store.deliveredPackets,
-                    [port]: [
-                      ...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
-                      packet,
-                    ],
-                  },
-                };
-              } else {
-                store = {
-                  ...store,
-                  fwToPortPackets: [...store.fwToPortPackets, packet],
-                };
-              }
-              emitChange();
-            }
-          }, LAYER_TRANSITION_DURATION);
-        }
-      }
-    }, LAYER_TRANSITION_DURATION);
+    setTimeout(() => processNIC(packet, result, generation), LAYER_TRANSITION_DURATION);
   }
 }
 
@@ -405,7 +368,11 @@ export function subscribe(listener: Listener): () => void {
 
 async function startCapture(): Promise<void> {
   try {
-    await invoke('start_capture');
+    if (isTauri) {
+      await invoke('start_capture');
+    } else {
+      startMockCapture();
+    }
     subscribeToPackets(true);
     store = { ...store, isCapturing: true, error: null };
     emitChange();
@@ -418,7 +385,11 @@ async function startCapture(): Promise<void> {
 
 async function stopCapture(): Promise<void> {
   try {
-    await invoke('stop_capture');
+    if (isTauri) {
+      await invoke('stop_capture');
+    } else {
+      stopMockCapture();
+    }
     subscribeToPackets(false);
     store = { ...store, isCapturing: false, error: null };
     emitChange();
@@ -443,7 +414,11 @@ export async function resetCapture(): Promise<void> {
     if (store.isCapturing) {
       await stopCapture();
     }
-    await invoke('reset_capture');
+    if (isTauri) {
+      await invoke('reset_capture');
+    } else {
+      resetMockCapture();
+    }
     // Increment generation to invalidate pending callbacks
     storeGeneration++;
     clearRateTimes();
@@ -467,14 +442,25 @@ export function getServerSnapshot(): PacketStoreState {
 }
 
 export function subscribeToPackets(isCapturing: boolean): void {
-  if (isCapturing && !unlistenPromise) {
-    unlistenPromise = listen<CapturedPacket>('packet:captured', (event) => {
-      const { packet, result } = event.payload;
-      processPacket(packet, result);
-    });
-  } else if (!isCapturing && unlistenPromise) {
-    unlistenPromise.then((unlisten) => unlisten());
-    unlistenPromise = null;
+  if (isTauri) {
+    if (isCapturing && !unlistenPromise) {
+      unlistenPromise = listen<CapturedPacket>('packet:captured', (event) => {
+        const { packet, result } = event.payload;
+        processPacket(packet, result);
+      });
+    } else if (!isCapturing && unlistenPromise) {
+      unlistenPromise.then((unlisten) => unlisten());
+      unlistenPromise = null;
+    }
+  } else {
+    if (isCapturing && !mockUnsubscribe) {
+      mockUnsubscribe = addPacketListener((captured) => {
+        processPacket(captured.packet, captured.result);
+      });
+    } else if (!isCapturing && mockUnsubscribe) {
+      mockUnsubscribe();
+      mockUnsubscribe = null;
+    }
   }
 }
 
@@ -544,18 +530,4 @@ export function clearAll(): void {
   clearRateTimes();
   store = createInitialStore(portCount);
   emitChange();
-}
-
-// Derived state getters (rate-based)
-export function getStreamingPorts(): number[] {
-  if (getRate(recentDeliveredTimes) < STREAM_MODE_RATE_THRESHOLD) return [];
-  return DEFAULT_PORTS.map((_, i) => i);
-}
-
-export function getNicDropStreamMode(): boolean {
-  return getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
-}
-
-export function getFwDropStreamMode(): boolean {
-  return getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
 }

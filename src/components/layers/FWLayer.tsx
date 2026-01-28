@@ -9,6 +9,7 @@ interface FWLayerProps {
   onDropAnimationComplete: (packetId: string) => void;
   onRisingComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
+  isPacketStreamMode?: boolean;
 }
 
 export function FWLayer({
@@ -19,6 +20,7 @@ export function FWLayer({
   onDropAnimationComplete,
   onRisingComplete,
   isDropStreamMode = false,
+  isPacketStreamMode = false,
 }: FWLayerProps) {
   return (
     <NetworkLayer
@@ -30,6 +32,7 @@ export function FWLayer({
       onDropAnimationComplete={onDropAnimationComplete}
       onAnimatingComplete={onRisingComplete}
       isDropStreamMode={isDropStreamMode}
+      isPacketStreamMode={isPacketStreamMode}
       showScrollHint
     />
   );

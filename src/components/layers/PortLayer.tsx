@@ -18,6 +18,9 @@ interface PositionStore {
   getSnapshot: () => number[];
 }
 
+// Module-level constant to avoid creating new empty array on each getSnapshot call
+const EMPTY_POSITIONS: number[] = [];
+
 function arraysEqual(a: number[], b: number[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
@@ -30,13 +33,13 @@ function createPositionStore(
   getAnimationZone: () => HTMLDivElement | null,
   getMailboxRefs: () => (HTMLDivElement | null)[]
 ): PositionStore {
-  let positions: number[] = [];
+  let positions: number[] = EMPTY_POSITIONS;
   const listeners = new Set<() => void>();
 
   const calculatePositions = () => {
     const zone = getAnimationZone();
     const refs = getMailboxRefs();
-    if (!zone) return [];
+    if (!zone) return EMPTY_POSITIONS;
 
     const zoneRect = zone.getBoundingClientRect();
     return refs.map((ref) => {
@@ -111,7 +114,7 @@ export function PortLayer({
   const mailboxPositions = useSyncExternalStore(
     storeRef.current.subscribe,
     storeRef.current.getSnapshot,
-    () => [] // Server snapshot
+    () => EMPTY_POSITIONS // Server snapshot - must return same reference
   );
 
   return (
@@ -134,11 +137,11 @@ export function PortLayer({
 
         {/* Animation zone - packets rising from below */}
         <div ref={animationZoneRef} className="relative h-32">
-          {/* Stream mode for high-traffic ports */}
+          {/* Stream mode: show streams for ports that exceed rate threshold */}
           {streamingPorts.map((portIndex) => (
             <PacketStream key={`stream-${portIndex}`} targetX={mailboxPositions[portIndex] || 0} />
           ))}
-          {/* Individual packet animations for normal traffic */}
+          {/* Individual packet animations - skip for streaming ports to avoid overlap */}
           {animatingPackets
             .filter((packet) => !streamingPorts.includes(packet.targetPort || 0))
             .map((packet) => (

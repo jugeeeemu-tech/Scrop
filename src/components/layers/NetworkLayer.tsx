@@ -16,6 +16,7 @@ interface NetworkLayerProps {
   onDropAnimationComplete: (packetId: string) => void;
   onAnimatingComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
+  isPacketStreamMode?: boolean;
   showScrollHint?: boolean;
 }
 
@@ -28,6 +29,7 @@ export function NetworkLayer({
   onDropAnimationComplete,
   onAnimatingComplete,
   isDropStreamMode = false,
+  isPacketStreamMode = false,
   showScrollHint = false,
 }: NetworkLayerProps) {
   const { ref: animationZoneRef, centerX } = useLayerCenterX();
@@ -50,17 +52,17 @@ export function NetworkLayer({
 
       {/* Animation zone */}
       <div ref={animationZoneRef} className="relative h-24 max-w-4xl mx-auto">
-        {isDropStreamMode ? (
-          animatingPackets.length > 0 && <PacketStream targetX={centerX} />
-        ) : (
-          animatingPackets.map((packet) => (
-            <AnimatedPacket
-              key={packet.id}
-              targetX={centerX}
-              onComplete={() => onAnimatingComplete(packet.id)}
-            />
-          ))
+        {isPacketStreamMode && (
+          <PacketStream targetX={centerX} />
         )}
+        {/* Individual packet animations - always show existing ones even in stream mode to let them complete */}
+        {animatingPackets.map((packet) => (
+          <AnimatedPacket
+            key={packet.id}
+            targetX={centerX}
+            onComplete={() => onAnimatingComplete(packet.id)}
+          />
+        ))}
       </div>
 
       {showScrollHint && <ScrollHint className="pb-4" />}

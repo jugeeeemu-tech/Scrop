@@ -4,24 +4,30 @@ import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
 import { FWLayer } from './components/layers/FWLayer';
 import { NICLayer } from './components/layers/NICLayer';
+import { MockController } from './components/dev/MockController';
 import { DEFAULT_PORTS } from './constants';
 import {
-  getStreamingPorts,
-  getNicDropStreamMode,
-  getFwDropStreamMode,
   handleFwToPortComplete,
   handleNicToFwComplete,
   handleIncomingComplete,
   handleDropAnimationComplete,
 } from './stores/packetStore';
 
+// Detect if running in Tauri environment
+const isTauri = '__TAURI_INTERNALS__' in window;
+
 function App() {
   const store = usePacketStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
 
-  const streamingPorts = getStreamingPorts();
-  const nicDropStreamMode = getNicDropStreamMode();
-  const fwDropStreamMode = getFwDropStreamMode();
+  // Get stream mode flags directly from store
+  const {
+    deliveredStreamPorts,
+    isNicDropStreamMode,
+    isFwDropStreamMode,
+    isIncomingStreamMode,
+    isNicToFwStreamMode,
+  } = store;
 
   return (
     <div className="min-h-screen bg-background">
@@ -39,7 +45,7 @@ function App() {
           deliveredPackets={store.deliveredPackets}
           animatingPackets={store.fwToPortPackets}
           onAnimationComplete={handleFwToPortComplete}
-          streamingPorts={streamingPorts}
+          streamingPorts={deliveredStreamPorts}
         />
 
         <FWLayer
@@ -49,7 +55,8 @@ function App() {
           risingPackets={store.nicToFwPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'fw')}
           onRisingComplete={handleNicToFwComplete}
-          isDropStreamMode={fwDropStreamMode}
+          isDropStreamMode={isFwDropStreamMode}
+          isPacketStreamMode={isNicToFwStreamMode}
         />
 
         <NICLayer
@@ -59,7 +66,8 @@ function App() {
           incomingPackets={store.incomingPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
           onIncomingComplete={handleIncomingComplete}
-          isDropStreamMode={nicDropStreamMode}
+          isDropStreamMode={isNicDropStreamMode}
+          isPacketStreamMode={isIncomingStreamMode}
         />
       </main>
 
@@ -68,6 +76,8 @@ function App() {
           <p className="text-xs text-muted-foreground">Scroll up to return to Application Layer</p>
         </div>
       </footer>
+
+      {!isTauri && <MockController />}
     </div>
   );
 }

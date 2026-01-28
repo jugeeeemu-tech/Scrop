@@ -9,6 +9,7 @@ interface NICLayerProps {
   onDropAnimationComplete: (packetId: string) => void;
   onIncomingComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
+  isPacketStreamMode?: boolean;
 }
 
 export function NICLayer({
@@ -19,6 +20,7 @@ export function NICLayer({
   onDropAnimationComplete,
   onIncomingComplete,
   isDropStreamMode = false,
+  isPacketStreamMode = false,
 }: NICLayerProps) {
   return (
     <NetworkLayer
@@ -30,6 +32,7 @@ export function NICLayer({
       onDropAnimationComplete={onDropAnimationComplete}
       onAnimatingComplete={onIncomingComplete}
       isDropStreamMode={isDropStreamMode}
+      isPacketStreamMode={isPacketStreamMode}
     />
   );
 }
