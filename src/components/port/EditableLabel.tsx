@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback } from 'react';
 import { cn } from '../../lib/utils';
 
 interface EditableLabelProps {
@@ -27,14 +27,12 @@ export function EditableLabel({
   className,
   type = 'text',
 }: EditableLabelProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
+  const callbackRef = useCallback((node: HTMLInputElement | null) => {
+    if (node) {
+      node.focus();
+      node.select();
     }
-  }, [isEditing]);
+  }, []);
 
   if (!isEditing) {
     return (
@@ -52,7 +50,7 @@ export function EditableLabel({
 
   return (
     <input
-      ref={inputRef}
+      ref={callbackRef}
       type={type}
       size={1}
       value={value}

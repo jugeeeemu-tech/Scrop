@@ -194,7 +194,10 @@ export function PortLayer({
             const isEtc = portInfo.type === 'etc';
 
             return (
-              <div key={portInfo.type === 'port' ? (portInfo.port === 0 ? `new-${index}` : portInfo.port) : 'etc'} className="flex gap-6 md:gap-10">
+              <div key={editingIndex === index
+                ? `editing-${index}`
+                : (portInfo.type === 'port' ? (portInfo.port === 0 ? `new-${index}` : portInfo.port) : 'etc')
+              } className="flex gap-6 md:gap-10">
                 {isEtc && index === etcIndex && (
                   <AddMailbox onClick={onAddPort} />
                 )}
