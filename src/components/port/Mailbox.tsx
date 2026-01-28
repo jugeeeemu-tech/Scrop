@@ -64,9 +64,9 @@ export function Mailbox({
 
         {/* Labels */}
         <div className="mt-2 text-center">
-          {portInfo.type === 'port' && (
-            <p className="text-xs font-medium text-foreground">{portInfo.port}</p>
-          )}
+          <p className="text-xs font-medium text-foreground">
+            {portInfo.type === 'port' ? portInfo.port : '—'}
+          </p>
           <p className="text-[10px] text-muted-foreground">{portInfo.label}</p>
         </div>
       </button>
