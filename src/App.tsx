@@ -19,9 +19,9 @@ function App() {
   const store = usePacketStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
 
-  const streamingPorts = getStreamingPorts(store.fwToPortPackets);
-  const nicDropStreamMode = getNicDropStreamMode(store.nicDropAnimations);
-  const fwDropStreamMode = getFwDropStreamMode(store.fwDropAnimations);
+  const streamingPorts = getStreamingPorts();
+  const nicDropStreamMode = getNicDropStreamMode();
+  const fwDropStreamMode = getFwDropStreamMode();
 
   return (
     <div className="min-h-screen bg-background">

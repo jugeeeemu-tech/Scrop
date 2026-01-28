@@ -7,9 +7,10 @@ export const DROP_ANIMATION_DURATION = 1000;
 export const ANIMATION_INITIAL_DELAY = 50;
 export const PACKET_GENERATION_INTERVAL = 2000;
 
-// Thresholds
-export const MAX_ANIMATING_PACKETS = 5;
-export const STREAM_PACKET_COUNT = 4;
+// Stream mode (rate-based)
+export const STREAM_MODE_RATE_WINDOW = 1000;  // ms - レート計算ウィンドウ
+export const STREAM_MODE_RATE_THRESHOLD = 5;   // この秒間パケット数以上でストリームモード
+export const STREAM_PACKET_COUNT = 4;          // ストリームアニメーションの同時表示数
 
 // Storage limits
 export const MAX_STORED_DROPPED_PACKETS = 50;

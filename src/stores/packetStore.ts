@@ -5,7 +5,8 @@ import {
   DEFAULT_PORTS,
   LAYER_ACTIVE_FLASH_DURATION,
   LAYER_TRANSITION_DURATION,
-  MAX_ANIMATING_PACKETS,
+  STREAM_MODE_RATE_WINDOW,
+  STREAM_MODE_RATE_THRESHOLD,
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
 } from '../constants';
@@ -65,6 +66,14 @@ let portCount = 4;
 let initialized = false;
 let storeGeneration = 0;
 
+// Rate tracking for stream mode
+const recentDeliveredTimes: number[] = [];
+const recentNicDropTimes: number[] = [];
+const recentFwDropTimes: number[] = [];
+const recentNicToFwTimes: number[] = [];
+const recentIncomingTimes: number[] = [];
+let rateWindowTimer: ReturnType<typeof setTimeout> | null = null;
+
 // Timers for layer flash
 const activeTimers = {
   nic: null as ReturnType<typeof setTimeout> | null,
@@ -108,6 +117,73 @@ function formatError(err: unknown, userMessage: string): string {
   return userMessage;
 }
 
+function getRate(times: number[]): number {
+  const now = Date.now();
+  while (times.length > 0 && now - times[0] > STREAM_MODE_RATE_WINDOW) {
+    times.shift();
+  }
+  return times.length;
+}
+
+function clearRateTimes() {
+  recentDeliveredTimes.length = 0;
+  recentNicDropTimes.length = 0;
+  recentFwDropTimes.length = 0;
+  recentNicToFwTimes.length = 0;
+  recentIncomingTimes.length = 0;
+  if (rateWindowTimer) {
+    clearTimeout(rateWindowTimer);
+    rateWindowTimer = null;
+  }
+}
+
+function scheduleRateWindowUpdate() {
+  if (rateWindowTimer) clearTimeout(rateWindowTimer);
+  rateWindowTimer = setTimeout(() => {
+    rateWindowTimer = null;
+    emitChange();
+  }, STREAM_MODE_RATE_WINDOW);
+}
+
+/**
+ * ストリームモード時に、既存のアニメーションバッファを全て消費して履歴に移動
+ */
+function flushAnimationBuffers() {
+  // Flush fwToPortPackets → deliveredPackets
+  const newDelivered = { ...store.deliveredPackets };
+  for (const pkt of store.fwToPortPackets) {
+    const port = pkt.targetPort ?? 0;
+    newDelivered[port] = [
+      ...(newDelivered[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
+      pkt,
+    ];
+  }
+
+  // Flush nicDropAnimations → nicDropped
+  const newNicDropped = [
+    ...store.nicDropped,
+    ...store.nicDropAnimations,
+  ].slice(-MAX_STORED_DROPPED_PACKETS);
+
+  // Flush fwDropAnimations → firewallDropped
+  const newFwDropped = [
+    ...store.firewallDropped,
+    ...store.fwDropAnimations,
+  ].slice(-MAX_STORED_DROPPED_PACKETS);
+
+  store = {
+    ...store,
+    deliveredPackets: newDelivered,
+    fwToPortPackets: [],
+    nicDropAnimations: [],
+    fwDropAnimations: [],
+    incomingPackets: [],
+    nicToFwPackets: [],
+    nicDropped: newNicDropped,
+    firewallDropped: newFwDropped,
+  };
+}
+
 function setNicActive(active: boolean) {
   store = { ...store, nicActive: active };
   emitChange();
@@ -122,22 +198,25 @@ function processPacket(rawPacket: AnimatingPacket, result: 'delivered' | 'nic-dr
   // 振り分け先を計算
   const targetPort = resolveTargetPort(rawPacket.destPort);
   const packet = { ...rawPacket, targetPort };
+  const now = Date.now();
 
   // Capture current generation to detect stale callbacks
   const generation = storeGeneration;
 
-  // 1. Start incoming animation immediately
-  store = {
-    ...store,
-    incomingPackets: [...store.incomingPackets, packet],
-    packetCounter: store.packetCounter + 1,
-  };
-  emitChange();
+  // Schedule rate window expiry for UI update
+  scheduleRateWindowUpdate();
 
-  // 2. After LAYER_TRANSITION_DURATION, process at NIC
-  setTimeout(() => {
-    // Skip if store was reset
-    if (generation !== storeGeneration) return;
+  // Record incoming rate
+  recentIncomingTimes.push(now);
+  const incomingStreamMode = getRate(recentIncomingTimes) >= STREAM_MODE_RATE_THRESHOLD;
+
+  if (incomingStreamMode) {
+    // Stream mode: skip incoming animation, go directly to NIC processing
+    flushAnimationBuffers();
+    store = {
+      ...store,
+      packetCounter: store.packetCounter + 1,
+    };
 
     // Flash NIC active
     setNicActive(true);
@@ -145,66 +224,169 @@ function processPacket(rawPacket: AnimatingPacket, result: 'delivered' | 'nic-dr
     activeTimers.nic = setTimeout(() => setNicActive(false), LAYER_ACTIVE_FLASH_DURATION);
 
     if (result === 'nic-drop') {
-      // NIC drop animation
+      recentNicDropTimes.push(now);
       store = {
         ...store,
-        nicDropAnimations: [...store.nicDropAnimations, packet],
         nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
       };
       emitChange();
     } else {
-      // Move to FW
-      store = {
-        ...store,
-        nicToFwPackets: [...store.nicToFwPackets, packet],
-      };
-      emitChange();
+      recentNicToFwTimes.push(now);
 
-      // 3. After another delay, process at FW
-      setTimeout(() => {
-        // Skip if store was reset
-        if (generation !== storeGeneration) return;
+      // Flash FW active
+      setFwActive(true);
+      if (activeTimers.fw) clearTimeout(activeTimers.fw);
+      activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
 
-        // Flash FW active
-        setFwActive(true);
-        if (activeTimers.fw) clearTimeout(activeTimers.fw);
-        activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
+      if (result === 'fw-drop') {
+        recentFwDropTimes.push(now);
+        store = {
+          ...store,
+          firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+        };
+        emitChange();
+      } else {
+        recentDeliveredTimes.push(now);
+        const port = packet.targetPort ?? 0;
+        store = {
+          ...store,
+          deliveredPackets: {
+            ...store.deliveredPackets,
+            [port]: [
+              ...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
+              packet,
+            ],
+          },
+        };
+        emitChange();
+      }
+    }
+  } else {
+    // Normal mode: animate through layers
+    store = {
+      ...store,
+      incomingPackets: [...store.incomingPackets, packet],
+      packetCounter: store.packetCounter + 1,
+    };
+    emitChange();
 
-        if (result === 'fw-drop') {
-          // FW drop animation
+    // 2. After LAYER_TRANSITION_DURATION, process at NIC
+    setTimeout(() => {
+      if (generation !== storeGeneration) return;
+
+      setNicActive(true);
+      if (activeTimers.nic) clearTimeout(activeTimers.nic);
+      activeTimers.nic = setTimeout(() => setNicActive(false), LAYER_ACTIVE_FLASH_DURATION);
+
+      if (result === 'nic-drop') {
+        recentNicDropTimes.push(Date.now());
+        const nicDropStream = getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+        if (nicDropStream) {
+          flushAnimationBuffers();
           store = {
             ...store,
-            fwDropAnimations: [...store.fwDropAnimations, packet],
-            firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+            nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
           };
-          emitChange();
         } else {
-          // Delivered - check stream mode
-          const isStreamMode = store.fwToPortPackets.length >= MAX_ANIMATING_PACKETS;
-          if (isStreamMode) {
-            // Skip animation, directly add to delivered
-            const targetPort = packet.targetPort ?? 0;
+          store = {
+            ...store,
+            nicDropAnimations: [...store.nicDropAnimations, packet],
+            nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+          };
+        }
+        emitChange();
+      } else {
+        recentNicToFwTimes.push(Date.now());
+        const nicToFwStream = getRate(recentNicToFwTimes) >= STREAM_MODE_RATE_THRESHOLD;
+        if (nicToFwStream) {
+          flushAnimationBuffers();
+          // Skip nicToFw animation, go directly to FW processing
+          setFwActive(true);
+          if (activeTimers.fw) clearTimeout(activeTimers.fw);
+          activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
+
+          if (result === 'fw-drop') {
+            recentFwDropTimes.push(Date.now());
+            store = {
+              ...store,
+              firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+            };
+          } else {
+            recentDeliveredTimes.push(Date.now());
+            const port = packet.targetPort ?? 0;
             store = {
               ...store,
               deliveredPackets: {
                 ...store.deliveredPackets,
-                [targetPort]: [
-                  ...(store.deliveredPackets[targetPort] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
+                [port]: [
+                  ...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
                   packet,
                 ],
               },
             };
-          } else {
-            store = {
-              ...store,
-              fwToPortPackets: [...store.fwToPortPackets, packet],
-            };
           }
           emitChange();
+        } else {
+          store = {
+            ...store,
+            nicToFwPackets: [...store.nicToFwPackets, packet],
+          };
+          emitChange();
+
+          // 3. After another delay, process at FW
+          setTimeout(() => {
+            if (generation !== storeGeneration) return;
+
+            setFwActive(true);
+            if (activeTimers.fw) clearTimeout(activeTimers.fw);
+            activeTimers.fw = setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
+
+            if (result === 'fw-drop') {
+              recentFwDropTimes.push(Date.now());
+              const fwDropStream = getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
+              if (fwDropStream) {
+                flushAnimationBuffers();
+                store = {
+                  ...store,
+                  firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+                };
+              } else {
+                store = {
+                  ...store,
+                  fwDropAnimations: [...store.fwDropAnimations, packet],
+                  firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+                };
+              }
+              emitChange();
+            } else {
+              recentDeliveredTimes.push(Date.now());
+              const deliveredStream = getRate(recentDeliveredTimes) >= STREAM_MODE_RATE_THRESHOLD;
+              if (deliveredStream) {
+                flushAnimationBuffers();
+                const port = packet.targetPort ?? 0;
+                store = {
+                  ...store,
+                  deliveredPackets: {
+                    ...store.deliveredPackets,
+                    [port]: [
+                      ...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
+                      packet,
+                    ],
+                  },
+                };
+              } else {
+                store = {
+                  ...store,
+                  fwToPortPackets: [...store.fwToPortPackets, packet],
+                };
+              }
+              emitChange();
+            }
+          }, LAYER_TRANSITION_DURATION);
         }
-      }, LAYER_TRANSITION_DURATION);
-    }
-  }, LAYER_TRANSITION_DURATION);
+      }
+    }, LAYER_TRANSITION_DURATION);
+  }
 }
 
 // Public API
@@ -264,6 +446,7 @@ export async function resetCapture(): Promise<void> {
     await invoke('reset_capture');
     // Increment generation to invalidate pending callbacks
     storeGeneration++;
+    clearRateTimes();
     store = createInitialStore(portCount);
     emitChange();
     // Restart capture after reset
@@ -358,31 +541,21 @@ export function handleDropAnimationComplete(packetId: string, layer: 'nic' | 'fw
 export function clearAll(): void {
   // Increment generation to invalidate pending callbacks
   storeGeneration++;
+  clearRateTimes();
   store = createInitialStore(portCount);
   emitChange();
 }
 
-// Derived state getters
-export function getStreamingPorts(fwToPortPackets: AnimatingPacket[]): number[] {
-  if (fwToPortPackets.length < MAX_ANIMATING_PACKETS) {
-    return [];
-  }
-  // Count packets per port
-  const portCounts: Record<number, number> = {};
-  fwToPortPackets.forEach((p) => {
-    const port = p.targetPort ?? 0;
-    portCounts[port] = (portCounts[port] || 0) + 1;
-  });
-  // Return ports with 2+ packets (they're getting busy)
-  return Object.entries(portCounts)
-    .filter(([, count]) => count >= 2)
-    .map(([port]) => Number(port));
+// Derived state getters (rate-based)
+export function getStreamingPorts(): number[] {
+  if (getRate(recentDeliveredTimes) < STREAM_MODE_RATE_THRESHOLD) return [];
+  return DEFAULT_PORTS.map((_, i) => i);
 }
 
-export function getNicDropStreamMode(nicDropAnimations: AnimatingPacket[]): boolean {
-  return nicDropAnimations.length >= MAX_ANIMATING_PACKETS;
+export function getNicDropStreamMode(): boolean {
+  return getRate(recentNicDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
 }
 
-export function getFwDropStreamMode(fwDropAnimations: AnimatingPacket[]): boolean {
-  return fwDropAnimations.length >= MAX_ANIMATING_PACKETS;
+export function getFwDropStreamMode(): boolean {
+  return getRate(recentFwDropTimes) >= STREAM_MODE_RATE_THRESHOLD;
 }
