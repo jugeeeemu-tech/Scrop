@@ -40,8 +40,9 @@ function resolveTargetPort(destPort: number): number {
 
 // Store state type
 export interface PacketStoreState {
-  // Packet counter
-  packetCounter: number;
+  // Packet counters
+  deliveredCounter: number;
+  droppedCounter: number;
 
   // Stored packets
   deliveredPackets: Record<number, AnimatingPacket[]>;
@@ -108,7 +109,8 @@ function createInitialDeliveredPackets(count: number): Record<number, AnimatingP
 
 function createInitialStore(portCount: number): PacketStoreState {
   return {
-    packetCounter: 0,
+    deliveredCounter: 0,
+    droppedCounter: 0,
     deliveredPackets: createInitialDeliveredPackets(portCount),
     firewallDropped: [],
     nicDropped: [],
@@ -244,6 +246,7 @@ function processNIC(packet: AnimatingPacket, result: PacketResult, generation: n
       ...store,
       nicActive: true,
       isNicDropStreamMode: isStreamMode,
+      droppedCounter: store.droppedCounter + 1,
       nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
       ...(isStreamMode ? {} : {
         nicDropAnimations: [...store.nicDropAnimations, packet],
@@ -301,6 +304,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
       ...store,
       fwActive: true,
       isFwDropStreamMode: isStreamMode,
+      droppedCounter: store.droppedCounter + 1,
       firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
       ...(isStreamMode ? {} : {
         fwDropAnimations: [...store.fwDropAnimations, packet],
@@ -322,6 +326,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
     store = {
       ...store,
       fwActive: true,
+      deliveredCounter: store.deliveredCounter + 1,
       streamingPorts: updatedStreamingPorts,
       deliveredPackets: {
         ...store.deliveredPackets,
@@ -333,6 +338,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
     store = {
       ...store,
       fwActive: true,
+      deliveredCounter: store.deliveredCounter + 1,
       streamingPorts: updatedStreamingPorts,
       fwToPortPackets: [...store.fwToPortPackets, packet],
     };
@@ -361,7 +367,6 @@ function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
     store = {
       ...store,
       isIncomingStreamMode: true,
-      packetCounter: store.packetCounter + 1,
     };
     emitChange();
     processNIC(packet, result, generation);
@@ -370,7 +375,6 @@ function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
     store = {
       ...store,
       incomingPackets: [...store.incomingPackets, packet],
-      packetCounter: store.packetCounter + 1,
     };
     emitChange();
     setTimeout(() => processNIC(packet, result, generation), LAYER_TRANSITION_DURATION);

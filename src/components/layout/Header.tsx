@@ -3,13 +3,14 @@ import { cn } from '../../lib/utils';
 
 interface HeaderProps {
   isCapturing: boolean;
-  packetCount: number;
+  deliveredCount: number;
+  droppedCount: number;
   onToggleCapture: () => void;
   onReset: () => void;
   error?: string | null;
 }
 
-export function Header({ isCapturing, packetCount, onToggleCapture, onReset, error }: HeaderProps) {
+export function Header({ isCapturing, deliveredCount, droppedCount, onToggleCapture, onReset, error }: HeaderProps) {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-sm border-b border-border">
       <div className="h-[var(--header-height)] max-w-6xl mx-auto px-6 flex items-center justify-between">
@@ -20,11 +21,19 @@ export function Header({ isCapturing, packetCount, onToggleCapture, onReset, err
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-muted">
-            <span
-              className={cn('w-2 h-2 rounded-full', isCapturing ? 'bg-success animate-pulse' : 'bg-muted-foreground')}
-            />
-            <span className="text-sm font-medium text-foreground">{packetCount}</span>
+          <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-muted">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={cn('w-2 h-2 rounded-full', isCapturing ? 'bg-success animate-pulse' : 'bg-muted-foreground')}
+              />
+              <span className="text-sm font-medium text-foreground">{deliveredCount}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span
+                className={cn('w-2 h-2 rounded-full', isCapturing ? 'bg-destructive animate-pulse' : 'bg-muted-foreground')}
+              />
+              <span className="text-sm font-medium text-foreground">{droppedCount}</span>
+            </div>
           </div>
 
           <button

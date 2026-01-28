@@ -24,7 +24,8 @@ function App() {
     <div className="min-h-screen bg-background">
       <Header
         isCapturing={isCapturing}
-        packetCount={store.packetCounter}
+        deliveredCount={store.deliveredCounter}
+        droppedCount={store.droppedCounter}
         onToggleCapture={toggleCapture}
         onReset={resetCapture}
         error={store.error}
