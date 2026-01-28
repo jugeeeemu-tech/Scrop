@@ -39,3 +39,10 @@ export interface PortInfo {
   port: number;
   label: string;
 }
+
+export type PacketResult = 'delivered' | 'nic-drop' | 'fw-drop';
+
+export interface CapturedPacket {
+  packet: AnimatingPacket;
+  result: PacketResult;
+}

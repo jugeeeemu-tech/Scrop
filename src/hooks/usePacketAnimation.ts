@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { AnimatingPacket, PortInfo } from '../types';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
+import type { AnimatingPacket, CapturedPacket, PortInfo } from '../types';
 import {
-  LAYER_TRANSITION_DURATION,
   LAYER_ACTIVE_FLASH_DURATION,
+  LAYER_TRANSITION_DURATION,
   MAX_ANIMATING_PACKETS,
   MAX_STORED_DROPPED_PACKETS,
   MAX_STORED_DELIVERED_PACKETS,
-  PACKET_GENERATION_INTERVAL,
-  PROTOCOLS,
 } from '../constants';
 
 interface UsePacketAnimationOptions {
@@ -46,18 +46,6 @@ interface UsePacketAnimationResult {
   handleFwToPortComplete: (packetId: string, targetPort: number) => void;
   handleDropAnimationComplete: (packetId: string, layer: 'nic' | 'fw') => void;
   clearAll: () => void;
-}
-
-function generatePacket(id: number, portCount: number): AnimatingPacket {
-  return {
-    id: `pkt-${id}-${Math.random().toString(36).slice(2, 8)}`,
-    protocol: PROTOCOLS[Math.floor(Math.random() * PROTOCOLS.length)],
-    size: Math.floor(Math.random() * 1500) + 64,
-    source: `192.168.1.${Math.floor(Math.random() * 255)}`,
-    destination: `10.0.0.${Math.floor(Math.random() * 255)}`,
-    targetPort: Math.floor(Math.random() * portCount),
-    timestamp: Date.now(),
-  };
 }
 
 function createInitialDeliveredPackets(portCount: number): Record<number, AnimatingPacket[]> {
@@ -110,77 +98,83 @@ export function usePacketAnimation({
   const nicDropStreamMode = nicDropAnimations.length >= MAX_ANIMATING_PACKETS;
   const fwDropStreamMode = fwDropAnimations.length >= MAX_ANIMATING_PACKETS;
 
+  // Start/stop capture via Tauri commands
   useEffect(() => {
-    if (!isCapturing) return;
+    if (isCapturing) {
+      invoke('start_capture').catch((err) => {
+        console.error('Failed to start capture:', err);
+      });
+    } else {
+      invoke('stop_capture').catch((err) => {
+        console.error('Failed to stop capture:', err);
+      });
+    }
+  }, [isCapturing]);
 
-    const interval = setInterval(() => {
-      const packet = generatePacket(packetCounter, ports.length);
-      const random = Math.random();
+  // Listen to single Tauri event and schedule animations with setTimeout
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
 
-      // First, start incoming animation (external -> NIC)
+    listen<CapturedPacket>('packet:captured', (event) => {
+      const { packet, result } = event.payload;
+
+      // 1. Start incoming animation immediately
       setIncomingPackets((prev) => [...prev, packet]);
+      setPacketCounter((prev) => prev + 1);
 
-      // After incoming animation completes, process at NIC
+      // 2. After LAYER_TRANSITION_DURATION, process at NIC
       setTimeout(() => {
-        // Flash NIC active
         setNicActive(true);
         setTimeout(() => setNicActive(false), LAYER_ACTIVE_FLASH_DURATION);
 
-        if (random < 0.1) {
-          // Dropped at NIC - animate bounce
-          setNicDropAnimations((prev) => [...prev, { ...packet, reason: 'Buffer overflow' }]);
-          setNicDropped((prev) => [
-            ...prev.slice(-(MAX_STORED_DROPPED_PACKETS - 1)),
-            { ...packet, reason: 'Buffer overflow' },
-          ]);
-        } else if (random < 0.25) {
-          // Will be dropped at Firewall - first animate NIC to FW
-          setNicToFwPackets((prev) => [...prev, packet]);
-
-          setTimeout(() => {
-            setFwActive(true);
-            setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
-
-            setFwDropAnimations((prev) => [...prev, { ...packet, reason: 'Blocked by rule' }]);
-            setFirewallDropped((prev) => [
-              ...prev.slice(-(MAX_STORED_DROPPED_PACKETS - 1)),
-              { ...packet, reason: 'Blocked by rule' },
-            ]);
-          }, LAYER_TRANSITION_DURATION);
+        if (result === 'nic-drop') {
+          // NIC drop animation
+          setNicDropAnimations((prev) => [...prev, packet]);
+          setNicDropped((prev) => [...prev.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet]);
         } else {
-          // Delivered successfully - animate through layers
+          // Move to FW
           setNicToFwPackets((prev) => [...prev, packet]);
 
+          // 3. After another delay, process at FW
           setTimeout(() => {
             setFwActive(true);
             setTimeout(() => setFwActive(false), LAYER_ACTIVE_FLASH_DURATION);
 
-            // Check if this port is in stream mode - if so, skip individual animation
-            setFwToPortPackets((prev) => {
-              const isStreamMode = prev.length >= MAX_ANIMATING_PACKETS;
-              if (isStreamMode) {
-                // Skip animation, directly add to delivered
-                const targetPort = packet.targetPort ?? 0;
-                setDeliveredPackets((d) => ({
-                  ...d,
-                  [targetPort]: [
-                    ...(d[targetPort] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
-                    packet,
-                  ],
-                }));
-                return prev;
-              }
-              return [...prev, packet];
-            });
+            if (result === 'fw-drop') {
+              // FW drop animation
+              setFwDropAnimations((prev) => [...prev, packet]);
+              setFirewallDropped((prev) => [
+                ...prev.slice(-(MAX_STORED_DROPPED_PACKETS - 1)),
+                packet,
+              ]);
+            } else {
+              // Delivered - check stream mode
+              setFwToPortPackets((prev) => {
+                const isStreamMode = prev.length >= MAX_ANIMATING_PACKETS;
+                if (isStreamMode) {
+                  // Skip animation, directly add to delivered
+                  const targetPort = packet.targetPort ?? 0;
+                  setDeliveredPackets((d) => ({
+                    ...d,
+                    [targetPort]: [
+                      ...(d[targetPort] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
+                      packet,
+                    ],
+                  }));
+                  return prev;
+                }
+                return [...prev, packet];
+              });
+            }
           }, LAYER_TRANSITION_DURATION);
         }
       }, LAYER_TRANSITION_DURATION);
+    }).then((unlisten) => unlisteners.push(unlisten));
 
-      setPacketCounter((prev) => prev + 1);
-    }, PACKET_GENERATION_INTERVAL);
-
-    return () => clearInterval(interval);
-  }, [isCapturing, packetCounter, ports.length]);
+    return () => {
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, []);
 
   const handleIncomingComplete = useCallback((packetId: string) => {
     setIncomingPackets((prev) => prev.filter((p) => p.id !== packetId));
@@ -224,6 +218,9 @@ export function usePacketAnimation({
     setFwToPortPackets([]);
     setNicDropAnimations([]);
     setFwDropAnimations([]);
+    invoke('reset_capture').catch((err) => {
+      console.error('Failed to reset capture:', err);
+    });
   }, [ports.length]);
 
   return {
