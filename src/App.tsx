@@ -1,79 +1,79 @@
-import { useState } from 'react';
+import { useCallback } from 'react';
+import { usePacketStore } from './hooks/usePacketStore';
+import { useCaptureControl } from './hooks/useCaptureControl';
 import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
 import { FWLayer } from './components/layers/FWLayer';
 import { NICLayer } from './components/layers/NICLayer';
-import { usePacketAnimation } from './hooks';
 import { DEFAULT_PORTS } from './constants';
+import {
+  getStreamingPorts,
+  getNicDropStreamMode,
+  getFwDropStreamMode,
+  handleFwToPortComplete,
+  handleNicToFwComplete,
+  handleIncomingComplete,
+  handleDropAnimationComplete,
+} from './stores/packetStore';
 
 function App() {
-  const [isCapturing, setIsCapturing] = useState(true);
+  const store = usePacketStore();
+  const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
 
-  const {
-    packetCounter,
-    deliveredPackets,
-    firewallDropped,
-    nicDropped,
-    incomingPackets,
-    nicToFwPackets,
-    fwToPortPackets,
-    nicDropAnimations,
-    fwDropAnimations,
-    nicActive,
-    fwActive,
-    streamingPorts,
-    nicDropStreamMode,
-    fwDropStreamMode,
-    handleIncomingComplete,
-    handleNicToFwComplete,
-    handleFwToPortComplete,
-    handleDropAnimationComplete,
-    clearAll,
-  } = usePacketAnimation({ isCapturing, ports: DEFAULT_PORTS });
+  const streamingPorts = getStreamingPorts(store.fwToPortPackets);
+  const nicDropStreamMode = getNicDropStreamMode(store.nicDropAnimations);
+  const fwDropStreamMode = getFwDropStreamMode(store.fwDropAnimations);
+
+  const onIncomingComplete = useCallback((id: string) => handleIncomingComplete(id), []);
+  const onNicToFwComplete = useCallback((id: string) => handleNicToFwComplete(id), []);
+  const onFwToPortComplete = useCallback(
+    (id: string, targetPort: number) => handleFwToPortComplete(id, targetPort),
+    []
+  );
+  const onDropAnimationComplete = useCallback(
+    (id: string, layer: 'nic' | 'fw') => handleDropAnimationComplete(id, layer),
+    []
+  );
 
   return (
     <div className="min-h-screen bg-background">
       <Header
         isCapturing={isCapturing}
-        packetCount={packetCounter}
-        onToggleCapture={() => setIsCapturing(!isCapturing)}
-        onReset={clearAll}
+        packetCount={store.packetCounter}
+        onToggleCapture={toggleCapture}
+        onReset={resetCapture}
       />
 
       <main>
-        {/* Application Layer - Ports/Mailboxes */}
         <PortLayer
           ports={DEFAULT_PORTS}
-          deliveredPackets={deliveredPackets}
-          animatingPackets={fwToPortPackets}
-          onAnimationComplete={handleFwToPortComplete}
+          deliveredPackets={store.deliveredPackets}
+          animatingPackets={store.fwToPortPackets}
+          onAnimationComplete={onFwToPortComplete}
           streamingPorts={streamingPorts}
         />
 
-        {/* Firewall Layer */}
         <FWLayer
-          droppedPackets={firewallDropped}
-          isActive={fwActive}
-          dropAnimations={fwDropAnimations}
-          risingPackets={nicToFwPackets}
-          onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'fw')}
-          onRisingComplete={handleNicToFwComplete}
+          droppedPackets={store.firewallDropped}
+          isActive={store.fwActive}
+          dropAnimations={store.fwDropAnimations}
+          risingPackets={store.nicToFwPackets}
+          onDropAnimationComplete={(id) => onDropAnimationComplete(id, 'fw')}
+          onRisingComplete={onNicToFwComplete}
           isDropStreamMode={fwDropStreamMode}
         />
 
-        {/* NIC Layer */}
         <NICLayer
-          droppedPackets={nicDropped}
-          isActive={nicActive}
-          dropAnimations={nicDropAnimations}
-          incomingPackets={incomingPackets}
-          onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
-          onIncomingComplete={handleIncomingComplete}
+          droppedPackets={store.nicDropped}
+          isActive={store.nicActive}
+          dropAnimations={store.nicDropAnimations}
+          incomingPackets={store.incomingPackets}
+          onDropAnimationComplete={(id) => onDropAnimationComplete(id, 'nic')}
+          onIncomingComplete={onIncomingComplete}
           isDropStreamMode={nicDropStreamMode}
         />
       </main>
 
-      {/* Footer */}
       <footer className="py-6 px-6 border-t border-border bg-background">
         <div className="max-w-4xl mx-auto text-center">
           <p className="text-xs text-muted-foreground">Scroll up to return to Application Layer</p>

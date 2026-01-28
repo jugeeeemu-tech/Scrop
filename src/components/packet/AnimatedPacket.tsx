@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Package } from 'lucide-react';
-import { useEffect, useState, useRef } from 'react';
+import { useState, useRef, type TransitionEvent } from 'react';
 
 interface AnimatedPacketProps {
   id: string;
@@ -10,38 +10,37 @@ interface AnimatedPacketProps {
 
 export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
   const [phase, setPhase] = useState<'start' | 'rising' | 'delivered'>('start');
-  const mountTime = useRef(Date.now());
   const completedRef = useRef(false);
 
-  useEffect(() => {
-    let animationFrameId: number;
+  // Trigger rising phase on first render via ref callback
+  const elementRef = useRef<HTMLDivElement | null>(null);
+  const hasStartedRef = useRef(false);
 
-    const checkPhase = () => {
-      const elapsed = Date.now() - mountTime.current;
+  const setRef = (el: HTMLDivElement | null) => {
+    elementRef.current = el;
+    if (el && !hasStartedRef.current) {
+      hasStartedRef.current = true;
+      // Use requestAnimationFrame to ensure the 'start' styles are applied first
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setPhase('rising');
+        });
+      });
+    }
+  };
 
-      if (elapsed >= 750 && !completedRef.current) {
-        completedRef.current = true;
-        setPhase('delivered');
-        onComplete();
-      } else if (elapsed >= 50) {
-        setPhase('rising');
-        if (!completedRef.current) {
-          animationFrameId = requestAnimationFrame(checkPhase);
-        }
-      } else {
-        animationFrameId = requestAnimationFrame(checkPhase);
-      }
-    };
-
-    animationFrameId = requestAnimationFrame(checkPhase);
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
-  }, [onComplete]);
+  const handleTransitionEnd = (e: TransitionEvent<HTMLDivElement>) => {
+    // Only trigger on the 'bottom' property ending (the main animation)
+    if (e.propertyName === 'bottom' && phase === 'rising' && !completedRef.current) {
+      completedRef.current = true;
+      setPhase('delivered');
+      onComplete();
+    }
+  };
 
   return (
     <div
+      ref={setRef}
       className={cn(
         'absolute transition-all ease-out z-10',
         phase === 'delivered' ? 'duration-200' : 'duration-700',
@@ -53,6 +52,7 @@ export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
         left: targetX,
         transform: 'translateX(-50%)',
       }}
+      onTransitionEnd={handleTransitionEnd}
     >
       <div
         className={cn(

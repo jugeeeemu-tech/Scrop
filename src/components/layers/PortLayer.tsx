@@ -2,7 +2,7 @@ import { Mailbox } from '../port/Mailbox';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { ScrollHint } from '../common/ScrollHint';
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 import type { AnimatingPacket, PortInfo } from '../../types';
 
 interface PortLayerProps {
@@ -13,30 +13,102 @@ interface PortLayerProps {
   streamingPorts?: number[];
 }
 
-export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimationComplete, streamingPorts = [] }: PortLayerProps) {
-  const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const animationZoneRef = useRef<HTMLDivElement>(null);
-  const [mailboxPositions, setMailboxPositions] = useState<number[]>([]);
+interface PositionStore {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => number[];
+}
 
-  const updateMailboxPositions = useCallback(() => {
-    if (!animationZoneRef.current) return;
+function createPositionStore(
+  getAnimationZone: () => HTMLDivElement | null,
+  getMailboxRefs: () => (HTMLDivElement | null)[]
+): PositionStore {
+  let positions: number[] = [];
+  const listeners = new Set<() => void>();
 
-    const zoneRect = animationZoneRef.current.getBoundingClientRect();
-    const positions = mailboxRefs.current.map((ref) => {
+  const calculatePositions = () => {
+    const zone = getAnimationZone();
+    const refs = getMailboxRefs();
+    if (!zone) return [];
+
+    const zoneRect = zone.getBoundingClientRect();
+    return refs.map((ref) => {
       if (!ref) return 0;
       const rect = ref.getBoundingClientRect();
-      // Calculate mailbox center X relative to animation zone's left edge
       return rect.left + rect.width / 2 - zoneRect.left;
     });
-    setMailboxPositions(positions);
-  }, []);
+  };
 
-  useEffect(() => {
-    updateMailboxPositions();
+  const observer = new ResizeObserver(() => {
+    const newPositions = calculatePositions();
+    if (JSON.stringify(newPositions) !== JSON.stringify(positions)) {
+      positions = newPositions;
+      listeners.forEach((l) => l());
+    }
+  });
 
-    window.addEventListener('resize', updateMailboxPositions);
-    return () => window.removeEventListener('resize', updateMailboxPositions);
-  }, [updateMailboxPositions, ports.length]);
+  let observing = false;
+
+  return {
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+
+      if (!observing) {
+        const zone = getAnimationZone();
+        if (zone) {
+          positions = calculatePositions();
+          observer.observe(zone);
+          // Also observe window resize
+          window.addEventListener('resize', () => {
+            const newPositions = calculatePositions();
+            if (JSON.stringify(newPositions) !== JSON.stringify(positions)) {
+              positions = newPositions;
+              listeners.forEach((l) => l());
+            }
+          });
+          observing = true;
+        }
+      }
+
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && observing) {
+          observer.disconnect();
+          observing = false;
+        }
+      };
+    },
+    getSnapshot() {
+      if (positions.length === 0) {
+        positions = calculatePositions();
+      }
+      return positions;
+    },
+  };
+}
+
+export function PortLayer({
+  ports,
+  deliveredPackets,
+  animatingPackets,
+  onAnimationComplete,
+  streamingPorts = [],
+}: PortLayerProps) {
+  const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const animationZoneRef = useRef<HTMLDivElement>(null);
+  const storeRef = useRef<PositionStore | null>(null);
+
+  if (!storeRef.current) {
+    storeRef.current = createPositionStore(
+      () => animationZoneRef.current,
+      () => mailboxRefs.current
+    );
+  }
+
+  const mailboxPositions = useSyncExternalStore(
+    storeRef.current.subscribe,
+    storeRef.current.getSnapshot,
+    () => [] // Server snapshot
+  );
 
   return (
     <section className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
@@ -61,10 +133,7 @@ export function PortLayer({ ports, deliveredPackets, animatingPackets, onAnimati
         <div ref={animationZoneRef} className="relative h-32">
           {/* Stream mode for high-traffic ports */}
           {streamingPorts.map((portIndex) => (
-            <PacketStream
-              key={`stream-${portIndex}`}
-              targetX={mailboxPositions[portIndex] || 0}
-            />
+            <PacketStream key={`stream-${portIndex}`} targetX={mailboxPositions[portIndex] || 0} />
           ))}
           {/* Individual packet animations for normal traffic */}
           {animatingPackets
