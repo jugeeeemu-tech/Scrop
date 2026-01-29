@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::Json;
+use axum::response::{IntoResponse, Json, Response};
 use serde::Serialize;
 
 use scrop_capture::AppState;
@@ -21,9 +21,26 @@ pub struct MessageResponse {
     pub message: String,
 }
 
+#[derive(Serialize)]
+pub struct ApiError {
+    pub error: String,
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(self)).into_response()
+    }
+}
+
+impl From<String> for ApiError {
+    fn from(msg: String) -> Self {
+        Self { error: msg }
+    }
+}
+
 pub async fn start_capture(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+) -> Result<Json<MessageResponse>, ApiError> {
     let capture = state.capture.lock().await;
     capture.start(state.event_tx.clone());
     Ok(Json(MessageResponse {
@@ -33,7 +50,7 @@ pub async fn start_capture(
 
 pub async fn stop_capture(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+) -> Result<Json<MessageResponse>, ApiError> {
     let capture = state.capture.lock().await;
     capture.stop();
     Ok(Json(MessageResponse {
@@ -43,7 +60,7 @@ pub async fn stop_capture(
 
 pub async fn get_capture_status(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<CaptureStatusResponse>, (StatusCode, String)> {
+) -> Result<Json<CaptureStatusResponse>, ApiError> {
     let capture = state.capture.lock().await;
     let stats = capture.get_stats();
     Ok(Json(CaptureStatusResponse {
@@ -55,7 +72,7 @@ pub async fn get_capture_status(
 
 pub async fn reset_capture(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+) -> Result<Json<MessageResponse>, ApiError> {
     let capture = state.capture.lock().await;
     if capture.is_running() {
         capture.stop();
@@ -68,7 +85,7 @@ pub async fn reset_capture(
 
 pub async fn list_interfaces(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<String>>, (StatusCode, String)> {
+) -> Result<Json<Vec<String>>, ApiError> {
     let capture = state.capture.lock().await;
     Ok(Json(capture.list_interfaces()))
 }
@@ -76,12 +93,12 @@ pub async fn list_interfaces(
 pub async fn attach_interface(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
-) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+) -> Result<Json<MessageResponse>, ApiError> {
     let capture = state.capture.lock().await;
     capture
         .attach_interface(&name)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(ApiError::from)?;
     Ok(Json(MessageResponse {
         message: format!("Interface {} attached", name),
     }))
@@ -90,12 +107,12 @@ pub async fn attach_interface(
 pub async fn detach_interface(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
-) -> Result<Json<MessageResponse>, (StatusCode, String)> {
+) -> Result<Json<MessageResponse>, ApiError> {
     let capture = state.capture.lock().await;
     capture
         .detach_interface(&name)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(ApiError::from)?;
     Ok(Json(MessageResponse {
         message: format!("Interface {} detached", name),
     }))
