@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tauri::AppHandle;
 
-use aya::maps::AsyncPerfEventArray;
+use aya::maps::{AsyncPerfEventArray, HashMap as AyaHashMap};
 use aya::programs::{TracePoint, Xdp, XdpFlags};
 use aya::util::online_cpus;
 use aya::{Btf, EbpfLoader};
@@ -29,16 +29,16 @@ static EBPF_ELF_ALIGNED: &AlignedBytes<{ include_bytes!(concat!(env!("OUT_DIR"),
 static EBPF_ELF: &[u8] = &EBPF_ELF_ALIGNED.0;
 
 pub struct EbpfCapture {
-    interface: String,
+    interfaces: Vec<String>,
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
 }
 
 impl EbpfCapture {
-    pub fn new(interface: &str) -> Self {
+    pub fn new(interfaces: Vec<String>) -> Self {
         Self {
-            interface: interface.to_string(),
+            interfaces,
             is_running: Arc::new(AtomicBool::new(false)),
             packet_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(std::sync::Mutex::new(CaptureStats::default())),
@@ -61,10 +61,10 @@ impl EbpfCapture {
         let is_running = Arc::clone(&self.is_running);
         let packet_counter = Arc::clone(&self.packet_counter);
         let stats = Arc::clone(&self.stats);
-        let interface = self.interface.clone();
+        let interfaces = self.interfaces.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = run_ebpf_capture(app, &interface, is_running.clone(), packet_counter, stats).await {
+            if let Err(e) = run_ebpf_capture(app, &interfaces, is_running.clone(), packet_counter, stats).await {
                 eprintln!("Fatal: {}", e);
                 is_running.store(false, Ordering::SeqCst);
                 std::process::exit(1);
@@ -81,6 +81,14 @@ impl EbpfCapture {
         *self.stats.lock().unwrap() = CaptureStats::default();
     }
 
+}
+
+/// インターフェース名から ifindex を取得
+fn get_ifindex(iface: &str) -> Option<u32> {
+    let path = format!("/sys/class/net/{}/ifindex", iface);
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +128,7 @@ struct PendingPacket {
 
 async fn run_ebpf_capture(
     app: AppHandle,
-    interface: &str,
+    interfaces: &[String],
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
@@ -134,11 +142,7 @@ async fn run_ebpf_capture(
         .load(EBPF_ELF)
         .map_err(|e| CaptureError::EbpfLoadFailed(e.to_string()))?;
 
-    if let Err(e) = aya_log::EbpfLogger::init(&mut ebpf) {
-        eprintln!("eBPF logger init failed (non-fatal): {}", e);
-    }
-
-    // XDP プログラムのロード・アタッチ
+    // XDP プログラムのロード
     let program: &mut Xdp = ebpf
         .program_mut("scrop_xdp")
         .ok_or_else(|| CaptureError::EbpfLoadFailed("XDP program 'scrop_xdp' not found".into()))?
@@ -149,23 +153,60 @@ async fn run_ebpf_capture(
         .load()
         .map_err(|e| CaptureError::EbpfLoadFailed(format!("XDP load: {}", e)))?;
 
-    // DRV_MODE → SKB_MODE フォールバック
-    let attach_result = program
-        .attach(interface, XdpFlags::DRV_MODE)
-        .or_else(|_| {
-            eprintln!("DRV_MODE failed, falling back to SKB_MODE");
-            program.attach(interface, XdpFlags::SKB_MODE)
-        })
-        .or_else(|_| {
-            eprintln!("SKB_MODE failed, falling back to default");
-            program.attach(interface, XdpFlags::default())
-        });
+    // 全インターフェースに XDP をアタッチ
+    let mut attached_count = 0;
+    let mut _link_ids = Vec::new();
+    let mut attached_ifindexes = Vec::new();
 
-    let _link_id = attach_result.map_err(|e| {
-        CaptureError::InterfaceNotFound(format!("Failed to attach XDP to {}: {}", interface, e))
-    })?;
+    for iface in interfaces {
+        let attach_result = program
+            .attach(iface, XdpFlags::DRV_MODE)
+            .or_else(|_| {
+                eprintln!("{}: DRV_MODE failed, falling back to SKB_MODE", iface);
+                program.attach(iface, XdpFlags::SKB_MODE)
+            })
+            .or_else(|_| {
+                eprintln!("{}: SKB_MODE failed, falling back to default", iface);
+                program.attach(iface, XdpFlags::default())
+            });
 
-    eprintln!("XDP program attached to {}", interface);
+        match attach_result {
+            Ok(link_id) => {
+                eprintln!("XDP program attached to {}", iface);
+                _link_ids.push(link_id);
+                attached_count += 1;
+
+                if let Some(ifindex) = get_ifindex(iface) {
+                    attached_ifindexes.push((iface.clone(), ifindex));
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to attach XDP to {} (skipping): {}", iface, e);
+            }
+        }
+    }
+
+    if attached_count == 0 {
+        return Err(CaptureError::InterfaceNotFound(
+            "Failed to attach XDP to any interface".into(),
+        ));
+    }
+
+    // MONITORED_IFS マップに アタッチ成功したインターフェースの ifindex を登録
+    {
+        let mut monitored_ifs: AyaHashMap<_, u32, u32> = AyaHashMap::try_from(
+            ebpf.map_mut("MONITORED_IFS")
+                .ok_or_else(|| CaptureError::EbpfLoadFailed("MONITORED_IFS map not found".into()))?,
+        )
+        .map_err(|e| CaptureError::EbpfLoadFailed(format!("MONITORED_IFS map: {}", e)))?;
+
+        for (iface, ifindex) in &attached_ifindexes {
+            monitored_ifs
+                .insert(ifindex, &1, 0)
+                .map_err(|e| CaptureError::EbpfLoadFailed(format!("MONITORED_IFS insert: {}", e)))?;
+            eprintln!("Registered ifindex {} ({}) in MONITORED_IFS", ifindex, iface);
+        }
+    }
 
     // kfree_skb トレースポイントのロード・アタッチ
     let tp: &mut TracePoint = ebpf
@@ -268,19 +309,17 @@ async fn run_ebpf_capture(
                                 let result = correlation_resolver.classify_drop(event.drop_reason);
                                 let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
 
-                                let (emit_event, emit_counter) = if let Some(p) = pending.remove(&tuple) {
+                                if let Some(p) = pending.remove(&tuple) {
                                     // XDP で見たパケットがドロップされた
-                                    (p.event, p.counter)
-                                } else {
-                                    // XDP を経由せずドロップ（または既にタイムアウト済み）
-                                    (event, counter)
-                                };
-
-                                let captured = convert_event(&emit_event, emit_counter, result, Some(reason));
-                                update_stats(&correlation_stats, &captured.result);
-                                if let Err(e) = emit_captured(&correlation_app, &captured) {
-                                    eprintln!("Failed to emit captured event: {}", e);
+                                    let captured = convert_event(&p.event, p.counter, result, Some(reason));
+                                    update_stats(&correlation_stats, &captured.result);
+                                    if let Err(e) = emit_captured(&correlation_app, &captured) {
+                                        eprintln!("Failed to emit captured event: {}", e);
+                                    }
                                 }
+                                // pending にマッチしない kfree_skb イベントは破棄する
+                                // （MONITORED_IFS でフィルタ済みだが、XDP 通過前のドロップや
+                                //   タイムアウト済みのパケットに対応）
                             }
                         }
                         None => break, // チャネル閉鎖
@@ -319,7 +358,8 @@ async fn run_ebpf_capture(
     }
 
     // ebpfがdropされるとXDPプログラム・トレースポイントは自動的にデタッチされる
-    eprintln!("XDP program and tracepoint detached from {}", interface);
+    let iface_names: Vec<&str> = attached_ifindexes.iter().map(|(name, _)| name.as_str()).collect();
+    eprintln!("XDP program and tracepoint detached from {:?}", iface_names);
     Ok(())
 }
 

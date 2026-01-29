@@ -24,9 +24,9 @@ impl AppState {
 fn create_backend() -> CaptureBackend {
     #[cfg(feature = "ebpf")]
     {
-        let iface = detect_interface();
-        eprintln!("Using eBPF capture on interface: {}", iface);
-        CaptureBackend::Ebpf(capture::ebpf::EbpfCapture::new(&iface))
+        let interfaces = detect_all_interfaces();
+        eprintln!("Using eBPF capture on interfaces: {:?}", interfaces);
+        CaptureBackend::Ebpf(capture::ebpf::EbpfCapture::new(interfaces))
     }
     #[cfg(not(feature = "ebpf"))]
     {
@@ -36,17 +36,18 @@ fn create_backend() -> CaptureBackend {
 }
 
 #[cfg(feature = "ebpf")]
-fn detect_interface() -> String {
-    // /proc/net/route からデフォルトゲートウェイのインターフェースを取得
-    if let Ok(content) = std::fs::read_to_string("/proc/net/route") {
-        for line in content.lines().skip(1) {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() >= 2 && fields[1] == "00000000" {
-                return fields[0].to_string();
-            }
+fn detect_all_interfaces() -> Vec<String> {
+    // /sys/class/net/ からすべてのネットワークインターフェースを列挙
+    if let Ok(entries) = std::fs::read_dir("/sys/class/net/") {
+        let ifaces: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        if !ifaces.is_empty() {
+            return ifaces;
         }
     }
-    "eth0".to_string()
+    vec!["eth0".to_string()]
 }
 
 #[tauri::command]
