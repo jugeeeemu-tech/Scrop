@@ -1,17 +1,27 @@
 use std::sync::Arc;
 use tauri::{Emitter, State};
+use tokio::task::JoinHandle;
 
 use scrop_capture::AppState as CaptureState;
 use scrop_capture::types::CaptureStats;
 
 pub struct AppState {
     inner: Arc<CaptureState>,
+    bridge_handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AppState {
     fn new() -> Self {
         Self {
             inner: Arc::new(CaptureState::new()),
+            bridge_handle: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    async fn abort_bridge(&self) {
+        let mut handle = self.bridge_handle.lock().await;
+        if let Some(h) = handle.take() {
+            h.abort();
         }
     }
 }
@@ -20,6 +30,9 @@ const EVENT_CAPTURED: &str = "packet:captured";
 
 #[tauri::command]
 async fn start_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // 既存のブリッジタスクを停止
+    state.abort_bridge().await;
+
     let inner = &state.inner;
     let capture = inner.capture.lock().await;
     capture.start(inner.event_tx.clone());
@@ -27,16 +40,19 @@ async fn start_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     // ブリッジ: broadcast → Tauri event
     let mut rx = inner.event_tx.subscribe();
     let app_clone = app.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         while let Ok(packet) = rx.recv().await {
             let _ = app_clone.emit(EVENT_CAPTURED, &packet);
         }
     });
+
+    *state.bridge_handle.lock().await = Some(handle);
     Ok(())
 }
 
 #[tauri::command]
 async fn stop_capture(state: State<'_, AppState>) -> Result<(), String> {
+    state.abort_bridge().await;
     let capture = state.inner.capture.lock().await;
     capture.stop();
     Ok(())
@@ -55,6 +71,7 @@ async fn get_capture_status(state: State<'_, AppState>) -> Result<CaptureStatusR
 
 #[tauri::command]
 async fn reset_capture(state: State<'_, AppState>) -> Result<(), String> {
+    state.abort_bridge().await;
     let capture = state.inner.capture.lock().await;
     if capture.is_running() {
         capture.stop();
