@@ -13,6 +13,11 @@ function getWsUrl(): string {
 async function apiCall(path: string, method: string = 'GET'): Promise<Response> {
   const res = await fetch(`${getBaseUrl()}${path}`, { method });
   if (!res.ok) {
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const body = await res.json();
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
@@ -50,9 +55,14 @@ export function createWebTransport(): Transport {
       let ws: WebSocket | null = null;
       let shouldReconnect = true;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+      let reconnectDelay = 1000;
 
       function connect() {
         ws = new WebSocket(getWsUrl());
+
+        ws.onopen = () => {
+          reconnectDelay = 1000;
+        };
 
         ws.onmessage = (event) => {
           try {
@@ -65,7 +75,8 @@ export function createWebTransport(): Transport {
 
         ws.onclose = () => {
           if (shouldReconnect) {
-            reconnectTimer = setTimeout(connect, 1000);
+            reconnectTimer = setTimeout(connect, reconnectDelay);
+            reconnectDelay = Math.min(reconnectDelay * 2, 10000);
           }
         };
 
