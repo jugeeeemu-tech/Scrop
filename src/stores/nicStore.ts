@@ -1,3 +1,5 @@
+import { transportReady } from '../transport';
+
 export interface NicStoreState {
   availableNics: string[];
   attachedNics: Set<string>;
@@ -6,10 +8,6 @@ export interface NicStoreState {
 type Listener = () => void;
 
 const STORAGE_KEY = 'scrop:attached-nics';
-
-const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-const MOCK_INTERFACES = ['eth0', 'lo', 'wlan0', 'docker0'];
 
 function loadAttachedNics(): Set<string> {
   try {
@@ -57,17 +55,13 @@ export function getNicsServerSnapshot(): NicStoreState {
 }
 
 async function attachNicBackend(name: string): Promise<void> {
-  if (isTauri) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('attach_interface', { interface: name });
-  }
+  const transport = await transportReady;
+  await transport.attachInterface(name);
 }
 
 async function detachNicBackend(name: string): Promise<void> {
-  if (isTauri) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('detach_interface', { interface: name });
-  }
+  const transport = await transportReady;
+  await transport.detachInterface(name);
 }
 
 export async function toggleNic(name: string): Promise<void> {
@@ -97,13 +91,8 @@ export async function toggleNic(name: string): Promise<void> {
 }
 
 export async function fetchAvailableNics(): Promise<void> {
-  let interfaces: string[];
-  if (isTauri) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    interfaces = await invoke<string[]>('list_interfaces');
-  } else {
-    interfaces = MOCK_INTERFACES;
-  }
+  const transport = await transportReady;
+  const interfaces = await transport.listInterfaces();
   state = { ...state, availableNics: interfaces };
   emitChange();
 }

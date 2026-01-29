@@ -7,7 +7,6 @@ import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
 import { FWLayer } from './components/layers/FWLayer';
 import { NICLayer } from './components/layers/NICLayer';
-import { MockController } from './components/dev/MockController';
 import {
   handleFwToPortComplete,
   handleNicToFwComplete,
@@ -27,9 +26,6 @@ import {
   toggleNic,
   initializeNics,
 } from './stores/nicStore';
-
-// Detect if running in Tauri environment
-const isTauri = '__TAURI_INTERNALS__' in window;
 
 function App() {
   const store = usePacketStore();
@@ -108,7 +104,6 @@ function App() {
         </div>
       </footer>
 
-      {!isTauri && <MockController />}
     </div>
   );
 }

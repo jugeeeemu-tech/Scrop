@@ -1,6 +1,6 @@
 # Scrop - Packet Capture Visualizer
 
-パケットキャプチャの様子を可視化するデスクトップアプリ。ポートをポスト、パケットを小包に見立て、パケットが各ポートに届く様子をアニメーションで表現する。
+パケットキャプチャの様子を可視化するアプリ。ポートをポスト、パケットを小包に見立て、パケットが各ポートに届く様子をアニメーションで表現する。Tauriネイティブアプリとaxum Webサーバの両方で動作。
 
 ## 技術スタック
 
@@ -12,6 +12,7 @@
 
 ### バックエンド
 - **Tauri 2.x** - デスクトップアプリフレームワーク
+- **axum** - Web サーバ (WebSocket + REST API)
 - **Rust** - バックエンド言語
 - **Aya** - eBPFライブラリ
 - **tokio** - 非同期ランタイム
@@ -21,38 +22,95 @@
 - **TC (Traffic Control)** - FW層でのパケット監視
 - **kprobe** - iptables/nftables フック
 
+## アーキテクチャ
+
+```
+                    scrop-capture (lib crate)
+                   broadcast::Sender<CapturedPacket>
+                      ↙                ↘
+              src-tauri/            scrop-server/
+        (broadcast→Tauri emit)    (broadcast→WebSocket)
+              ↕ IPC                  ↕ HTTP/WS
+           [Tauriウィンドウ]         [ブラウザ]
+```
+
 ## プロジェクト構成
 
 ```
 Scrop/
-├── src/                    # React フロントエンド
-│   ├── App.tsx
-│   ├── index.css          # Tailwind CSS
-│   └── main.tsx
-├── src-tauri/             # Rust バックエンド
-│   ├── src/
-│   │   ├── lib.rs         # Tauriアプリロジック
-│   │   └── main.rs
-│   └── Cargo.toml
-├── .node-version          # fnm用 (Node.js 22)
-└── package.json
+├── Cargo.toml                    # workspace root
+├── scrop-capture/                # キャプチャロジック (lib crate)
+│   ├── Cargo.toml
+│   ├── build.rs                  # eBPFコンパイル
+│   └── src/
+│       ├── lib.rs                # CaptureBackend, AppState
+│       ├── ebpf.rs               # eBPFキャプチャ
+│       ├── mock.rs               # モックキャプチャ
+│       ├── drop_reason.rs        # BTF drop reason resolver
+│       └── types.rs              # パケット型定義
+├── scrop-server/                 # axum Webサーバ (bin crate)
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs               # エントリポイント (--host, --port)
+│       ├── routes.rs             # REST API
+│       └── ws.rs                 # WebSocket
+├── src-tauri/                    # Tauri デスクトップアプリ
+│   ├── Cargo.toml                # scrop-capture依存
+│   ├── build.rs                  # tauri_build のみ
+│   └── src/
+│       ├── main.rs
+│       └── lib.rs                # broadcastブリッジ
+├── scrop-common/                 # eBPF共有型定義
+├── scrop-ebpf/                   # eBPFプログラム (C)
+├── src/                          # React フロントエンド
+│   ├── transport/                # 通信抽象化層
+│   │   ├── index.ts              # 共通インターフェース + 自動選択
+│   │   ├── tauri.ts              # Tauri IPC実装
+│   │   └── web.ts                # HTTP + WebSocket実装
+│   ├── stores/                   # 状態管理
+│   ├── components/               # UIコンポーネント
+│   └── App.tsx
+├── package.json
+└── vite.config.ts                # proxy設定含む
 ```
 
 ## 開発コマンド
 
 ```bash
-# 開発サーバー起動
+# Tauri版（従来通り）
 npm run tauri dev
 
-# プロダクションビルド
+# Web版開発（2ターミナル）
+cargo run -p scrop-server                    # :3000
+npm run dev                                   # :1420 (proxy → :3000)
+
+# Web版 mockモード（eBPFなし）
+cargo run -p scrop-server --no-default-features
+
+# Web版プロダクションビルド
+npm run build && cargo build --release -p scrop-server
+# → target/release/scrop-server (シングルバイナリ、dist/を埋め込み)
+
+# プロダクションビルド（Tauri）
 npm run tauri build
 
-# フロントエンドのみ起動（Rustなし）
-npm run dev
-
-# 型チェック
-npm run build
+# リモートアクセス
+ssh -L 3000:127.0.0.1:3000 user@remote
+# ブラウザ: http://localhost:3000
 ```
+
+## REST API (scrop-server)
+
+| メソッド | パス | 処理 |
+|----------|------|------|
+| POST | `/api/capture/start` | キャプチャ開始 |
+| POST | `/api/capture/stop` | キャプチャ停止 |
+| GET | `/api/capture/status` | ステータス取得 |
+| POST | `/api/capture/reset` | リセット |
+| GET | `/api/interfaces` | インターフェース一覧 |
+| POST | `/api/interfaces/:name/attach` | NIC attach |
+| POST | `/api/interfaces/:name/detach` | NIC detach |
+| GET | `/ws` | WebSocket (パケットストリーム) |
 
 ## 画面構成
 
@@ -72,3 +130,4 @@ npm run build
 
 - パケットキャプチャにはroot権限が必要
 - WSL2で動作確認済み（WSLg必要）
+- `--no-default-features` でmockモード（eBPFなし）で動作可能

@@ -1,5 +1,3 @@
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
 import type { AnimatingPacket, CapturedPacket, PortInfo } from '../types';
 import {
   LAYER_ACTIVE_FLASH_DURATION,
@@ -13,31 +11,7 @@ import {
   getPortKey,
 } from '../constants';
 import { getPorts, subscribePorts } from './portStore';
-import {
-  startMockCapture,
-  stopMockCapture,
-  resetMockCapture,
-  addPacketListener,
-} from '../mocks/packetGenerator';
-
-// Detect if running in Tauri environment
-const isTauri = '__TAURI_INTERNALS__' in window;
-
-/**
- * 宛先ポート番号からポートキーを計算
- * 設定済みポートに該当すればそのポート番号、なければ ETC_PORT_KEY
- */
-function resolveTargetPort(destPort: number): number {
-  const ports = getPorts();
-
-  for (const portInfo of ports) {
-    if (portInfo.type === 'port' && portInfo.port === destPort) {
-      return portInfo.port;
-    }
-  }
-
-  return ETC_PORT_KEY;
-}
+import { transportReady } from '../transport';
 
 // Store state type
 export interface PacketStoreState {
@@ -85,8 +59,7 @@ type Listener = () => void;
 // Module-level state
 let store: PacketStoreState = createInitialStore(getPorts());
 const listeners = new Set<Listener>();
-let unlistenPromise: Promise<UnlistenFn> | null = null;
-let mockUnsubscribe: (() => void) | null = null;
+let packetUnsubscribe: (() => void) | null = null;
 let initialized = false;
 let storeGeneration = 0;
 
@@ -103,6 +76,22 @@ const activeTimers = {
   nic: null as ReturnType<typeof setTimeout> | null,
   fw: null as ReturnType<typeof setTimeout> | null,
 };
+
+/**
+ * 宛先ポート番号からポートキーを計算
+ * 設定済みポートに該当すればそのポート番号、なければ ETC_PORT_KEY
+ */
+function resolveTargetPort(destPort: number): number {
+  const ports = getPorts();
+
+  for (const portInfo of ports) {
+    if (portInfo.type === 'port' && portInfo.port === destPort) {
+      return portInfo.port;
+    }
+  }
+
+  return ETC_PORT_KEY;
+}
 
 function createInitialDeliveredPackets(ports: PortInfo[]): Record<number, AnimatingPacket[]> {
   const result: Record<number, AnimatingPacket[]> = {};
@@ -423,11 +412,8 @@ export function subscribe(listener: Listener): () => void {
 
 async function startCapture(): Promise<void> {
   try {
-    if (isTauri) {
-      await invoke('start_capture');
-    } else {
-      startMockCapture();
-    }
+    const transport = await transportReady;
+    await transport.startCapture();
     subscribeToPackets(true);
     store = { ...store, isCapturing: true, error: null };
     emitChange();
@@ -440,11 +426,8 @@ async function startCapture(): Promise<void> {
 
 async function stopCapture(): Promise<void> {
   try {
-    if (isTauri) {
-      await invoke('stop_capture');
-    } else {
-      stopMockCapture();
-    }
+    const transport = await transportReady;
+    await transport.stopCapture();
     subscribeToPackets(false);
     store = { ...store, isCapturing: false, error: null };
     emitChange();
@@ -469,11 +452,8 @@ export async function resetCapture(): Promise<void> {
     if (store.isCapturing) {
       await stopCapture();
     }
-    if (isTauri) {
-      await invoke('reset_capture');
-    } else {
-      resetMockCapture();
-    }
+    const transport = await transportReady;
+    await transport.resetCapture();
     // Increment generation to invalidate pending callbacks
     storeGeneration++;
     clearRateTimes();
@@ -497,25 +477,15 @@ export function getServerSnapshot(): PacketStoreState {
 }
 
 export function subscribeToPackets(isCapturing: boolean): void {
-  if (isTauri) {
-    if (isCapturing && !unlistenPromise) {
-      unlistenPromise = listen<CapturedPacket>('packet:captured', (event) => {
-        const { packet, result } = event.payload;
-        processPacket(packet, result);
-      });
-    } else if (!isCapturing && unlistenPromise) {
-      unlistenPromise.then((unlisten) => unlisten());
-      unlistenPromise = null;
-    }
-  } else {
-    if (isCapturing && !mockUnsubscribe) {
-      mockUnsubscribe = addPacketListener((captured) => {
+  if (isCapturing && !packetUnsubscribe) {
+    transportReady.then((transport) => {
+      packetUnsubscribe = transport.subscribePackets((captured: CapturedPacket) => {
         processPacket(captured.packet, captured.result);
       });
-    } else if (!isCapturing && mockUnsubscribe) {
-      mockUnsubscribe();
-      mockUnsubscribe = null;
-    }
+    });
+  } else if (!isCapturing && packetUnsubscribe) {
+    packetUnsubscribe();
+    packetUnsubscribe = null;
   }
 }
 
