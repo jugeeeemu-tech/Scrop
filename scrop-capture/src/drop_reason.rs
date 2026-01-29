@@ -122,34 +122,25 @@ impl DropReasonResolver {
             }
 
             // skip variant data for this type
-            offset += Self::extra_bytes(kind, vlen, target_kind) as usize;
+            offset += Self::extra_bytes(kind, vlen) as usize;
         }
 
         None
     }
 
     /// 各 BTF kind のバリアント/メンバーデータサイズを計算してスキップする。
-    fn extra_bytes(kind: u32, vlen: u32, _target_kind: u32) -> u32 {
+    fn extra_bytes(kind: u32, vlen: u32) -> u32 {
         match kind {
-            // BTF_KIND_INT
-            1 => 4,
-            // BTF_KIND_ENUM
-            6 => vlen * 8, // name_off(4) + val(4)
-            // BTF_KIND_ARRAY
-            4 => 12,
-            // BTF_KIND_STRUCT, BTF_KIND_UNION
-            5 | 2 => vlen * 12, // name_off(4) + type(4) + offset(4)
-            // BTF_KIND_FUNC_PROTO
-            13 => vlen * 8, // name_off(4) + type(4)
-            // BTF_KIND_DATASEC
-            15 => vlen * 12, // type(4) + offset(4) + size(4)
-            // BTF_KIND_ENUM64
-            19 => vlen * 12, // name_off(4) + val_lo(4) + val_hi(4)
-            // BTF_KIND_DECL_TAG
-            17 => 4,
-            // BTF_KIND_PTR, BTF_KIND_TYPEDEF, BTF_KIND_VOLATILE, BTF_KIND_CONST,
-            // BTF_KIND_RESTRICT, BTF_KIND_FUNC, BTF_KIND_FWD, BTF_KIND_VAR,
-            // BTF_KIND_TYPE_TAG
+            1 => 4,              // BTF_KIND_INT
+            3 => 12,             // BTF_KIND_ARRAY
+            4 | 5 => vlen * 12,  // BTF_KIND_STRUCT / BTF_KIND_UNION
+            6 => vlen * 8,       // BTF_KIND_ENUM
+            13 => vlen * 8,      // BTF_KIND_FUNC_PROTO
+            14 => 4,             // BTF_KIND_VAR
+            15 => vlen * 12,     // BTF_KIND_DATASEC
+            17 => 4,             // BTF_KIND_DECL_TAG
+            19 => vlen * 12,     // BTF_KIND_ENUM64
+            // PTR, FWD, TYPEDEF, VOLATILE, CONST, RESTRICT, FUNC, FLOAT, TYPE_TAG
             _ => 0,
         }
     }
