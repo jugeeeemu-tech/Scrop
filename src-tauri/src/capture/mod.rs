@@ -1,5 +1,7 @@
 pub mod mock;
 #[cfg(feature = "ebpf")]
+pub mod drop_reason;
+#[cfg(feature = "ebpf")]
 pub mod ebpf;
 
 use crate::packet::CaptureStats;

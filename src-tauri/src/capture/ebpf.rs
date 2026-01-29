@@ -14,12 +14,19 @@ use tokio::sync::mpsc;
 
 use crate::events::emit_captured;
 use crate::packet::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult, Protocol};
-use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS, SKB_DROP_REASON_NETFILTER_DROP};
+use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS};
 
+use super::drop_reason::DropReasonResolver;
 use super::CaptureError;
 
-static EBPF_ELF: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf"));
+// ELF64 ヘッダは 8-byte アラインメントが必要だが、include_bytes! は 1-byte しか保証しない。
+// object クレートがアラインメントを検証するため、明示的に 8-byte 境界に配置する。
+#[repr(C, align(8))]
+struct AlignedBytes<const N: usize>([u8; N]);
+
+static EBPF_ELF_ALIGNED: &AlignedBytes<{ include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")).len() }> =
+    &AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")));
+static EBPF_ELF: &[u8] = &EBPF_ELF_ALIGNED.0;
 
 pub struct EbpfCapture {
     interface: String,
@@ -58,8 +65,9 @@ impl EbpfCapture {
 
         tokio::spawn(async move {
             if let Err(e) = run_ebpf_capture(app, &interface, is_running.clone(), packet_counter, stats).await {
-                eprintln!("eBPF capture error: {}", e);
+                eprintln!("Fatal: {}", e);
                 is_running.store(false, Ordering::SeqCst);
+                std::process::exit(1);
             }
         });
     }
@@ -106,24 +114,6 @@ struct PendingPacket {
     received_at: Instant,
 }
 
-/// kfree_skb の drop_reason から PacketResult を分類
-fn classify_drop(drop_reason: u32) -> PacketResult {
-    if drop_reason == SKB_DROP_REASON_NETFILTER_DROP {
-        PacketResult::FwDrop
-    } else {
-        PacketResult::NicDrop
-    }
-}
-
-/// drop_reason から人間向けの理由文字列を生成
-fn drop_reason_string(drop_reason: u32, result: &PacketResult) -> String {
-    match result {
-        PacketResult::FwDrop => format!("Dropped by firewall (reason={})", drop_reason),
-        PacketResult::NicDrop => format!("Dropped in network stack (reason={})", drop_reason),
-        PacketResult::Delivered => unreachable!(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // メインキャプチャループ
 // ---------------------------------------------------------------------------
@@ -135,6 +125,10 @@ async fn run_ebpf_capture(
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
 ) -> Result<(), CaptureError> {
+    let resolver = Arc::new(
+        DropReasonResolver::new().map_err(|e| CaptureError::Other(e))?,
+    );
+
     let mut ebpf = EbpfLoader::new()
         .btf(Btf::from_sys_fs().ok().as_ref())
         .load(EBPF_ELF)
@@ -248,6 +242,7 @@ async fn run_ebpf_capture(
     let correlation_app = app.clone();
     let correlation_is_running = Arc::clone(&is_running);
     let correlation_stats = Arc::clone(&stats);
+    let correlation_resolver = Arc::clone(&resolver);
 
     tokio::spawn(async move {
         let mut pending: HashMap<FiveTuple, PendingPacket> = HashMap::new();
@@ -270,8 +265,8 @@ async fn run_ebpf_capture(
                                 });
                             } else if event.action == ACTION_KFREE_SKB {
                                 // kfree_skb → pending から 5-tuple でマッチ検索
-                                let result = classify_drop(event.drop_reason);
-                                let reason = drop_reason_string(event.drop_reason, &result);
+                                let result = correlation_resolver.classify_drop(event.drop_reason);
+                                let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
 
                                 let (emit_event, emit_counter) = if let Some(p) = pending.remove(&tuple) {
                                     // XDP で見たパケットがドロップされた
