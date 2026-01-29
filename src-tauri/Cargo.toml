@@ -25,11 +25,9 @@ chrono = "0.4"
 
 # eBPF dependencies (optional)
 aya = { version = "0.13", features = ["async_tokio"], optional = true }
-aya-log = { version = "0.2", optional = true }
 bytes = { version = "1", optional = true }
-log = { version = "0.4", optional = true }
 scrop-common = { path = "../scrop-common", features = ["user"], optional = true }
 
 [features]
 default = ["ebpf"]
-ebpf = ["aya", "aya-log", "bytes", "log", "scrop-common"]
+ebpf = ["aya", "bytes", "scrop-common"]

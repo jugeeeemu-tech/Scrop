@@ -12,52 +12,38 @@ fn build_ebpf() {
     use std::process::Command;
 
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let ebpf_dir = Path::new(&manifest_dir).parent().unwrap().join("scrop-ebpf");
+    let project_root = Path::new(&manifest_dir).parent().unwrap();
+    let ebpf_src_dir = project_root.join("scrop-ebpf").join("src");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    println!("cargo:rerun-if-changed={}", ebpf_dir.join("src").display());
+    let source_path = ebpf_src_dir.join("scrop.bpf.c");
+    let include_dir = ebpf_src_dir.to_str().unwrap();
+    let output_path = out_dir.join("scrop-ebpf");
+
+    println!("cargo:rerun-if-changed={}", source_path.display());
     println!(
         "cargo:rerun-if-changed={}",
-        ebpf_dir.join("Cargo.toml").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        Path::new(&manifest_dir)
-            .parent()
-            .unwrap()
-            .join("scrop-common/src")
-            .display()
+        ebpf_src_dir.join("vmlinux.h").display()
     );
 
-    let status = Command::new("rustup")
+    let status = Command::new("clang")
         .args([
-            "run",
-            "nightly",
-            "cargo",
-            "build",
-            "--release",
-            "--target=bpfel-unknown-none",
-            "-Z",
-            "build-std=core",
+            "-target",
+            "bpf",
+            "-D__TARGET_ARCH_x86",
+            "-O2",
+            "-g",
+            "-I",
+            include_dir,
+            "-c",
+            source_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
         ])
-        .env_remove("RUSTC")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .current_dir(&ebpf_dir)
         .status()
-        .expect("failed to run rustup");
+        .expect("failed to run clang — is clang installed?");
 
     if !status.success() {
-        panic!("eBPF program build failed");
+        panic!("eBPF program build failed (clang)");
     }
-
-    let ebpf_bin = ebpf_dir.join("target/bpfel-unknown-none/release/scrop-ebpf");
-    let dest = out_dir.join("scrop-ebpf");
-    std::fs::copy(&ebpf_bin, &dest).unwrap_or_else(|e| {
-        panic!(
-            "failed to copy eBPF binary from {} to {}: {}",
-            ebpf_bin.display(),
-            dest.display(),
-            e
-        )
-    });
 }
