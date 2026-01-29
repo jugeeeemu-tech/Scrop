@@ -1,12 +1,14 @@
+pub mod types;
+#[cfg(not(feature = "ebpf"))]
 pub mod mock;
 #[cfg(feature = "ebpf")]
 pub mod drop_reason;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
 
-use crate::packet::CaptureStats;
-use mock::MockCapture;
-use tauri::AppHandle;
+use std::sync::Arc;
+use tokio::sync::{broadcast, Mutex};
+use types::{CapturedPacket, CaptureStats};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -30,24 +32,26 @@ impl std::fmt::Display for CaptureError {
     }
 }
 
-#[allow(dead_code)]
 pub enum CaptureBackend {
-    Mock(MockCapture),
+    #[cfg(not(feature = "ebpf"))]
+    Mock(mock::MockCapture),
     #[cfg(feature = "ebpf")]
     Ebpf(ebpf::EbpfCapture),
 }
 
 impl CaptureBackend {
-    pub fn start(&self, app: AppHandle) {
+    pub fn start(&self, tx: broadcast::Sender<CapturedPacket>) {
         match self {
-            CaptureBackend::Mock(m) => m.start(app),
+            #[cfg(not(feature = "ebpf"))]
+            CaptureBackend::Mock(m) => m.start(tx),
             #[cfg(feature = "ebpf")]
-            CaptureBackend::Ebpf(e) => e.start(app),
+            CaptureBackend::Ebpf(e) => e.start(tx),
         }
     }
 
     pub fn stop(&self) {
         match self {
+            #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.stop(),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.stop(),
@@ -56,6 +60,7 @@ impl CaptureBackend {
 
     pub fn is_running(&self) -> bool {
         match self {
+            #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.is_running(),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.is_running(),
@@ -64,6 +69,7 @@ impl CaptureBackend {
 
     pub fn get_stats(&self) -> CaptureStats {
         match self {
+            #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.get_stats(),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.get_stats(),
@@ -72,6 +78,7 @@ impl CaptureBackend {
 
     pub fn reset(&self) {
         match self {
+            #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.reset(),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.reset(),
@@ -80,6 +87,7 @@ impl CaptureBackend {
 
     pub fn mode(&self) -> &'static str {
         match self {
+            #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(_) => "mock",
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(_) => "ebpf",
@@ -88,7 +96,11 @@ impl CaptureBackend {
 
     pub async fn attach_interface(&self, name: &str) -> Result<(), String> {
         match self {
-            CaptureBackend::Mock(_) => Ok(()),
+            #[cfg(not(feature = "ebpf"))]
+            CaptureBackend::Mock(_) => {
+                let _ = name;
+                Ok(())
+            }
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.attach_interface(name).await,
         }
@@ -96,7 +108,11 @@ impl CaptureBackend {
 
     pub async fn detach_interface(&self, name: &str) -> Result<(), String> {
         match self {
-            CaptureBackend::Mock(_) => Ok(()),
+            #[cfg(not(feature = "ebpf"))]
+            CaptureBackend::Mock(_) => {
+                let _ = name;
+                Ok(())
+            }
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.detach_interface(name).await,
         }
@@ -104,6 +120,7 @@ impl CaptureBackend {
 
     pub fn list_interfaces(&self) -> Vec<String> {
         match self {
+            #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(_) => {
                 vec![
                     "eth0".to_string(),
@@ -130,4 +147,38 @@ pub fn detect_all_interfaces() -> Vec<String> {
         }
     }
     vec!["eth0".to_string()]
+}
+
+fn create_backend() -> CaptureBackend {
+    #[cfg(feature = "ebpf")]
+    {
+        eprintln!("Using eBPF capture backend");
+        CaptureBackend::Ebpf(ebpf::EbpfCapture::new())
+    }
+    #[cfg(not(feature = "ebpf"))]
+    {
+        eprintln!("Using mock capture backend");
+        CaptureBackend::Mock(mock::MockCapture::new())
+    }
+}
+
+pub struct AppState {
+    pub capture: Arc<Mutex<CaptureBackend>>,
+    pub event_tx: broadcast::Sender<CapturedPacket>,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        let (event_tx, _) = broadcast::channel(1024);
+        Self {
+            capture: Arc::new(Mutex::new(create_backend())),
+            event_tx,
+        }
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }

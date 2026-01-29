@@ -1,10 +1,9 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::AppHandle;
+use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
-use crate::events::emit_captured;
-use crate::packet::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
+use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
 
 const PACKET_GENERATION_INTERVAL_MS: u64 = 2000;
 
@@ -32,7 +31,7 @@ impl MockCapture {
         self.stats.lock().unwrap().clone()
     }
 
-    pub fn start(&self, app: AppHandle) {
+    pub fn start(&self, tx: broadcast::Sender<CapturedPacket>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
             return; // Already running
         }
@@ -71,11 +70,9 @@ impl MockCapture {
                     }
                 }
 
-                // Emit single event with packet and result
+                // Send via broadcast channel
                 let captured = CapturedPacket { packet, result };
-                if let Err(e) = emit_captured(&app, &captured) {
-                    eprintln!("Failed to emit captured event: {}", e);
-                }
+                let _ = tx.send(captured);
 
                 sleep(Duration::from_millis(PACKET_GENERATION_INTERVAL_MS)).await;
             }

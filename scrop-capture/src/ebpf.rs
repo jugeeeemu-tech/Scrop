@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tauri::AppHandle;
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use aya::maps::{AsyncPerfEventArray, HashMap as AyaHashMap};
 use aya::programs::{TracePoint, Xdp, XdpFlags};
@@ -11,14 +11,12 @@ use aya::programs::xdp::XdpLinkId;
 use aya::util::online_cpus;
 use aya::{Btf, EbpfLoader};
 use bytes::BytesMut;
-use tokio::sync::{mpsc, oneshot};
 
-use crate::events::emit_captured;
-use crate::packet::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult, Protocol};
+use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult, Protocol};
 use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS};
 
-use super::drop_reason::DropReasonResolver;
-use super::CaptureError;
+use crate::drop_reason::DropReasonResolver;
+use crate::CaptureError;
 
 // ELF64 ヘッダは 8-byte アラインメントが必要だが、include_bytes! は 1-byte しか保証しない。
 // object クレートがアラインメントを検証するため、明示的に 8-byte 境界に配置する。
@@ -69,7 +67,7 @@ impl EbpfCapture {
         self.stats.lock().unwrap().clone()
     }
 
-    pub fn start(&self, app: AppHandle) {
+    pub fn start(&self, event_tx: broadcast::Sender<CapturedPacket>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -82,7 +80,7 @@ impl EbpfCapture {
         let stats = Arc::clone(&self.stats);
 
         tokio::spawn(async move {
-            if let Err(e) = run_ebpf_capture(app, cmd_rx, is_running.clone(), packet_counter, stats).await {
+            if let Err(e) = run_ebpf_capture(event_tx, cmd_rx, is_running.clone(), packet_counter, stats).await {
                 eprintln!("Fatal: {}", e);
                 is_running.store(false, Ordering::SeqCst);
                 std::process::exit(1);
@@ -189,7 +187,7 @@ fn attach_xdp(
 // ---------------------------------------------------------------------------
 
 async fn run_ebpf_capture(
-    app: AppHandle,
+    event_tx: broadcast::Sender<CapturedPacket>,
     mut cmd_rx: mpsc::Receiver<EbpfCommand>,
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
@@ -290,7 +288,7 @@ async fn run_ebpf_capture(
     drop(tx);
 
     // 相関タスク: XDP と kfree_skb イベントを突き合わせる
-    let correlation_app = app.clone();
+    let correlation_event_tx = event_tx.clone();
     let correlation_is_running = Arc::clone(&is_running);
     let correlation_stats = Arc::clone(&stats);
     let correlation_resolver = Arc::clone(&resolver);
@@ -323,13 +321,9 @@ async fn run_ebpf_capture(
                                     // XDP で見たパケットがドロップされた
                                     let captured = convert_event(&p.event, p.counter, result, Some(reason));
                                     update_stats(&correlation_stats, &captured.result);
-                                    if let Err(e) = emit_captured(&correlation_app, &captured) {
-                                        eprintln!("Failed to emit captured event: {}", e);
-                                    }
+                                    let _ = correlation_event_tx.send(captured);
                                 }
                                 // pending にマッチしない kfree_skb イベントは破棄する
-                                // （MONITORED_IFS でフィルタ済みだが、XDP 通過前のドロップや
-                                //   タイムアウト済みのパケットに対応）
                             }
                         }
                         None => break, // チャネル閉鎖
@@ -352,9 +346,7 @@ async fn run_ebpf_capture(
                         if let Some(p) = pending.remove(&key) {
                             let captured = convert_event(&p.event, p.counter, PacketResult::Delivered, None);
                             update_stats(&correlation_stats, &captured.result);
-                            if let Err(e) = emit_captured(&correlation_app, &captured) {
-                                eprintln!("Failed to emit captured event: {}", e);
-                            }
+                            let _ = correlation_event_tx.send(captured);
                         }
                     }
                 }
@@ -435,8 +427,6 @@ fn handle_detach(
     let (link_id, ifindex) = attached.remove(interface)
         .ok_or_else(|| format!("Interface {} is not attached", interface))?;
 
-    // XdpLinkId の drop だけでは XDP プログラムはデタッチされない。
-    // 明示的に program.detach() を呼ぶ必要がある。
     let program: &mut Xdp = ebpf
         .program_mut("scrop_xdp")
         .ok_or_else(|| "XDP program not found".to_string())?

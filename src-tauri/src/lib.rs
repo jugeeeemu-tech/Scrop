@@ -1,56 +1,50 @@
-mod capture;
-mod events;
-mod packet;
-
-use capture::CaptureBackend;
-use packet::CaptureStats;
 use std::sync::Arc;
-use tauri::State;
-use tokio::sync::Mutex;
+use tauri::{Emitter, State};
+
+use scrop_capture::AppState as CaptureState;
+use scrop_capture::types::CaptureStats;
 
 pub struct AppState {
-    capture: Arc<Mutex<CaptureBackend>>,
+    inner: Arc<CaptureState>,
 }
 
 impl AppState {
     fn new() -> Self {
-        let backend = create_backend();
         Self {
-            capture: Arc::new(Mutex::new(backend)),
+            inner: Arc::new(CaptureState::new()),
         }
     }
 }
 
-fn create_backend() -> CaptureBackend {
-    #[cfg(feature = "ebpf")]
-    {
-        eprintln!("Using eBPF capture backend");
-        CaptureBackend::Ebpf(capture::ebpf::EbpfCapture::new())
-    }
-    #[cfg(not(feature = "ebpf"))]
-    {
-        eprintln!("Using mock capture backend");
-        CaptureBackend::Mock(capture::mock::MockCapture::new())
-    }
-}
+const EVENT_CAPTURED: &str = "packet:captured";
 
 #[tauri::command]
 async fn start_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let capture = state.capture.lock().await;
-    capture.start(app);
+    let inner = &state.inner;
+    let capture = inner.capture.lock().await;
+    capture.start(inner.event_tx.clone());
+
+    // ブリッジ: broadcast → Tauri event
+    let mut rx = inner.event_tx.subscribe();
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        while let Ok(packet) = rx.recv().await {
+            let _ = app_clone.emit(EVENT_CAPTURED, &packet);
+        }
+    });
     Ok(())
 }
 
 #[tauri::command]
 async fn stop_capture(state: State<'_, AppState>) -> Result<(), String> {
-    let capture = state.capture.lock().await;
+    let capture = state.inner.capture.lock().await;
     capture.stop();
     Ok(())
 }
 
 #[tauri::command]
 async fn get_capture_status(state: State<'_, AppState>) -> Result<CaptureStatusResponse, String> {
-    let capture = state.capture.lock().await;
+    let capture = state.inner.capture.lock().await;
     let stats = capture.get_stats();
     Ok(CaptureStatusResponse {
         is_capturing: capture.is_running(),
@@ -61,7 +55,7 @@ async fn get_capture_status(state: State<'_, AppState>) -> Result<CaptureStatusR
 
 #[tauri::command]
 async fn reset_capture(state: State<'_, AppState>) -> Result<(), String> {
-    let capture = state.capture.lock().await;
+    let capture = state.inner.capture.lock().await;
     if capture.is_running() {
         capture.stop();
     }
@@ -71,19 +65,19 @@ async fn reset_capture(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn list_interfaces(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let capture = state.capture.lock().await;
+    let capture = state.inner.capture.lock().await;
     Ok(capture.list_interfaces())
 }
 
 #[tauri::command]
 async fn attach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
-    let capture = state.capture.lock().await;
+    let capture = state.inner.capture.lock().await;
     capture.attach_interface(&interface).await
 }
 
 #[tauri::command]
 async fn detach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
-    let capture = state.capture.lock().await;
+    let capture = state.inner.capture.lock().await;
     capture.detach_interface(&interface).await
 }
 

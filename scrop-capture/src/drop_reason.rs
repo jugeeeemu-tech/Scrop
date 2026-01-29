@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
-use crate::packet::PacketResult;
+use crate::types::PacketResult;
 
 // ---------------------------------------------------------------------------
 // BTF binary format structures
