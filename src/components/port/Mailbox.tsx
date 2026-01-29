@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Package, X, GripVertical } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { EditableLabel } from './EditableLabel';
 import type { AnimatingPacket, PortInfo } from '../../types';
@@ -40,6 +40,15 @@ export function Mailbox({
 }: MailboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const isEtc = portInfo.type === 'etc';
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = '';
+      };
+    }
+  }, [isOpen]);
 
   return (
     <div ref={ref} className={cn('relative group', className)}>
