@@ -388,7 +388,7 @@ fn handle_attach(
     attached: &mut HashMap<String, (XdpLinkId, u32)>,
 ) -> Result<(), String> {
     if attached.contains_key(interface) {
-        return Err(format!("Interface {} is already attached", interface));
+        return Ok(());
     }
 
     let ifindex = get_ifindex(interface)

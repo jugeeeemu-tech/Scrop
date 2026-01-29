@@ -106,20 +106,21 @@ export async function initializeNics(): Promise<void> {
     ? loadAttachedNics()
     : new Set(state.availableNics);
 
-  // バックエンドに全対象NICをattach
-  const attached = new Set<string>();
-  for (const name of targetNics) {
-    if (state.availableNics.includes(name)) {
-      try {
-        await attachNicBackend(name);
-        attached.add(name);
-      } catch (e) {
-        console.error(`Failed to attach interface ${name}:`, e);
-      }
+  // availableNicsに存在するもののみ対象にする
+  const validTargetNics = new Set(
+    [...targetNics].filter((name) => state.availableNics.includes(name))
+  );
+
+  // バックエンドに全対象NICをattach（best-effort）
+  for (const name of validTargetNics) {
+    try {
+      await attachNicBackend(name);
+    } catch (e) {
+      console.error(`Failed to attach interface ${name}:`, e);
     }
   }
 
-  state = { ...state, attachedNics: attached };
-  saveAttachedNics(attached);
+  state = { ...state, attachedNics: validTargetNics };
+  saveAttachedNics(validTargetNics);
   emitChange();
 }
