@@ -1,17 +1,20 @@
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tauri::AppHandle;
 
 use aya::maps::AsyncPerfEventArray;
-use aya::programs::{Xdp, XdpFlags};
+use aya::programs::{TracePoint, Xdp, XdpFlags};
 use aya::util::online_cpus;
-use aya::EbpfLoader;
+use aya::{Btf, EbpfLoader};
 use bytes::BytesMut;
+use tokio::sync::mpsc;
 
 use crate::events::emit_captured;
 use crate::packet::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult, Protocol};
-use scrop_common::PacketEvent;
+use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS, SKB_DROP_REASON_NETFILTER_DROP};
 
 use super::CaptureError;
 
@@ -72,6 +75,59 @@ impl EbpfCapture {
 
 }
 
+// ---------------------------------------------------------------------------
+// 相関ロジック用の型定義
+// ---------------------------------------------------------------------------
+
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct FiveTuple {
+    src_addr: u32,
+    dst_addr: u32,
+    src_port: u16,
+    dst_port: u16,
+    protocol: u8,
+}
+
+impl FiveTuple {
+    fn from_event(event: &PacketEvent) -> Self {
+        Self {
+            src_addr: event.src_addr,
+            dst_addr: event.dst_addr,
+            src_port: event.src_port,
+            dst_port: event.dst_port,
+            protocol: event.protocol,
+        }
+    }
+}
+
+struct PendingPacket {
+    event: PacketEvent,
+    counter: u64,
+    received_at: Instant,
+}
+
+/// kfree_skb の drop_reason から PacketResult を分類
+fn classify_drop(drop_reason: u32) -> PacketResult {
+    if drop_reason == SKB_DROP_REASON_NETFILTER_DROP {
+        PacketResult::FwDrop
+    } else {
+        PacketResult::NicDrop
+    }
+}
+
+/// drop_reason から人間向けの理由文字列を生成
+fn drop_reason_string(drop_reason: u32, result: &PacketResult) -> String {
+    match result {
+        PacketResult::FwDrop => format!("Dropped by firewall (reason={})", drop_reason),
+        PacketResult::NicDrop => format!("Dropped in network stack (reason={})", drop_reason),
+        PacketResult::Delivered => unreachable!(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// メインキャプチャループ
+// ---------------------------------------------------------------------------
+
 async fn run_ebpf_capture(
     app: AppHandle,
     interface: &str,
@@ -80,6 +136,7 @@ async fn run_ebpf_capture(
     stats: Arc<std::sync::Mutex<CaptureStats>>,
 ) -> Result<(), CaptureError> {
     let mut ebpf = EbpfLoader::new()
+        .btf(Btf::from_sys_fs().ok().as_ref())
         .load(EBPF_ELF)
         .map_err(|e| CaptureError::EbpfLoadFailed(e.to_string()))?;
 
@@ -87,6 +144,7 @@ async fn run_ebpf_capture(
         eprintln!("eBPF logger init failed (non-fatal): {}", e);
     }
 
+    // XDP プログラムのロード・アタッチ
     let program: &mut Xdp = ebpf
         .program_mut("scrop_xdp")
         .ok_or_else(|| CaptureError::EbpfLoadFailed("XDP program 'scrop_xdp' not found".into()))?
@@ -115,6 +173,22 @@ async fn run_ebpf_capture(
 
     eprintln!("XDP program attached to {}", interface);
 
+    // kfree_skb トレースポイントのロード・アタッチ
+    let tp: &mut TracePoint = ebpf
+        .program_mut("scrop_kfree_skb")
+        .ok_or_else(|| CaptureError::EbpfLoadFailed("tracepoint 'scrop_kfree_skb' not found".into()))?
+        .try_into()
+        .map_err(|e: aya::programs::ProgramError| CaptureError::EbpfLoadFailed(e.to_string()))?;
+
+    tp.load()
+        .map_err(|e| CaptureError::EbpfLoadFailed(format!("tracepoint load: {}", e)))?;
+
+    tp.attach("skb", "kfree_skb")
+        .map_err(|e| CaptureError::EbpfLoadFailed(format!("tracepoint attach: {}", e)))?;
+
+    eprintln!("kfree_skb tracepoint attached");
+
+    // Perf イベントのセットアップ
     let mut perf_array: AsyncPerfEventArray<_> = ebpf
         .take_map("EVENTS")
         .ok_or_else(|| CaptureError::EbpfLoadFailed("EVENTS map not found".into()))?
@@ -124,16 +198,18 @@ async fn run_ebpf_capture(
     let cpus = online_cpus()
         .map_err(|e| CaptureError::Other(format!("Failed to get online CPUs: {:?}", e)))?;
 
-    // CPUごとにリーダーを起動
+    // イベント相関用チャネル
+    let (tx, mut rx) = mpsc::channel::<(PacketEvent, u64)>(4096);
+
+    // CPUごとにリーダーを起動 → チャネルに送信
     for cpu_id in cpus {
         let mut buf = perf_array
             .open(cpu_id, None)
             .map_err(|e| CaptureError::Other(format!("Failed to open perf buffer for CPU {}: {}", cpu_id, e)))?;
 
-        let app = app.clone();
         let is_running = Arc::clone(&is_running);
         let packet_counter = Arc::clone(&packet_counter);
-        let stats = Arc::clone(&stats);
+        let tx = tx.clone();
 
         tokio::spawn(async move {
             let mut buffers = (0..10)
@@ -159,37 +235,110 @@ async fn run_ebpf_capture(
                         unsafe { std::ptr::read_unaligned(event_buf.as_ptr() as *const PacketEvent) };
 
                     let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
-                    let captured = convert_event(&event, counter);
-
-                    {
-                        let mut s = stats.lock().unwrap();
-                        s.total_packets += 1;
-                        match captured.result {
-                            PacketResult::Delivered => s.delivered += 1,
-                            PacketResult::NicDrop => s.nic_dropped += 1,
-                            PacketResult::FwDrop => s.fw_dropped += 1,
-                        }
-                    }
-
-                    if let Err(e) = emit_captured(&app, &captured) {
-                        eprintln!("Failed to emit captured event: {}", e);
-                    }
+                    let _ = tx.send((event, counter)).await;
                 }
             }
         });
     }
+
+    // 送信側を閉じる（全CPUリーダーがcloneを保持）
+    drop(tx);
+
+    // 相関タスク: XDP と kfree_skb イベントを突き合わせる
+    let correlation_app = app.clone();
+    let correlation_is_running = Arc::clone(&is_running);
+    let correlation_stats = Arc::clone(&stats);
+
+    tokio::spawn(async move {
+        let mut pending: HashMap<FiveTuple, PendingPacket> = HashMap::new();
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
+        const TIMEOUT_MS: u128 = 50;
+
+        loop {
+            tokio::select! {
+                recv = rx.recv() => {
+                    match recv {
+                        Some((event, counter)) => {
+                            let tuple = FiveTuple::from_event(&event);
+
+                            if event.action == ACTION_XDP_PASS {
+                                // XDP PASS → pending に格納
+                                pending.insert(tuple, PendingPacket {
+                                    event,
+                                    counter,
+                                    received_at: Instant::now(),
+                                });
+                            } else if event.action == ACTION_KFREE_SKB {
+                                // kfree_skb → pending から 5-tuple でマッチ検索
+                                let result = classify_drop(event.drop_reason);
+                                let reason = drop_reason_string(event.drop_reason, &result);
+
+                                let (emit_event, emit_counter) = if let Some(p) = pending.remove(&tuple) {
+                                    // XDP で見たパケットがドロップされた
+                                    (p.event, p.counter)
+                                } else {
+                                    // XDP を経由せずドロップ（または既にタイムアウト済み）
+                                    (event, counter)
+                                };
+
+                                let captured = convert_event(&emit_event, emit_counter, result, Some(reason));
+                                update_stats(&correlation_stats, &captured.result);
+                                if let Err(e) = emit_captured(&correlation_app, &captured) {
+                                    eprintln!("Failed to emit captured event: {}", e);
+                                }
+                            }
+                        }
+                        None => break, // チャネル閉鎖
+                    }
+                }
+                _ = interval.tick() => {
+                    if !correlation_is_running.load(Ordering::SeqCst) && pending.is_empty() {
+                        break;
+                    }
+
+                    // タイムアウト: 50ms 超過の pending パケットを Delivered として emit
+                    let now = Instant::now();
+                    let expired: Vec<FiveTuple> = pending
+                        .iter()
+                        .filter(|(_, p)| now.duration_since(p.received_at).as_millis() > TIMEOUT_MS)
+                        .map(|(k, _)| k.clone())
+                        .collect();
+
+                    for key in expired {
+                        if let Some(p) = pending.remove(&key) {
+                            let captured = convert_event(&p.event, p.counter, PacketResult::Delivered, None);
+                            update_stats(&correlation_stats, &captured.result);
+                            if let Err(e) = emit_captured(&correlation_app, &captured) {
+                                eprintln!("Failed to emit captured event: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 
     // メインループ: is_runningがfalseになるまで待機
     while is_running.load(Ordering::SeqCst) {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
-    // ebpfがdropされるとXDPプログラムは自動的にデタッチされる
-    eprintln!("XDP program detached from {}", interface);
+    // ebpfがdropされるとXDPプログラム・トレースポイントは自動的にデタッチされる
+    eprintln!("XDP program and tracepoint detached from {}", interface);
     Ok(())
 }
 
-fn convert_event(event: &PacketEvent, counter: u64) -> CapturedPacket {
+fn update_stats(stats: &std::sync::Mutex<CaptureStats>, result: &PacketResult) {
+    let mut s = stats.lock().unwrap();
+    s.total_packets += 1;
+    match result {
+        PacketResult::Delivered => s.delivered += 1,
+        PacketResult::NicDrop => s.nic_dropped += 1,
+        PacketResult::FwDrop => s.fw_dropped += 1,
+    }
+}
+
+fn convert_event(event: &PacketEvent, counter: u64, result: PacketResult, reason: Option<String>) -> CapturedPacket {
     use rand::Rng;
     let mut rng = rand::rng();
 
@@ -222,16 +371,16 @@ fn convert_event(event: &PacketEvent, counter: u64) -> CapturedPacket {
         protocol,
         size: event.pkt_len,
         source,
+        src_port: event.src_port,
         destination,
         dest_port: event.dst_port,
         target_port: None,
         timestamp: chrono::Utc::now().timestamp_millis(),
-        reason: None,
+        reason,
     };
 
-    // この段階では全パケットをDeliveredとして扱う
     CapturedPacket {
         packet,
-        result: PacketResult::Delivered,
+        result,
     }
 }

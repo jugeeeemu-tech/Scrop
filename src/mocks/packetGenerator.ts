@@ -42,12 +42,15 @@ function generatePacket(): AnimatingPacket {
   const portInfo = ports[Math.floor(Math.random() * ports.length)];
   const destPort = portInfo.type === 'port' ? portInfo.port : Math.floor(Math.random() * 60000) + 1024;
 
+  const srcPort = Math.floor(Math.random() * 60000) + 1024;
+
   return {
     id: `mock-${Date.now()}-${packetCounter++}`,
     protocol: randomElement(PROTOCOLS),
     size: Math.floor(Math.random() * 1400) + 64,
-    source: `${randomElement(MOCK_IPS)}:${Math.floor(Math.random() * 60000) + 1024}`,
-    destination: `192.168.1.1:${destPort}`,
+    source: randomElement(MOCK_IPS),
+    srcPort,
+    destination: '192.168.1.1',
     destPort,
     timestamp: Date.now(),
   };

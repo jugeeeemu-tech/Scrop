@@ -82,7 +82,7 @@ function DroppedPile({ packets, count, type, dropAnimations, onDropAnimationComp
                     <span className="text-muted-foreground">{packet.size}B</span>
                   </div>
                   <p className="text-muted-foreground truncate">
-                    {packet.source} → {packet.destination}
+                    {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
                   </p>
                   {packet.reason && <p className="text-destructive mt-1 truncate">{packet.reason}</p>}
                 </div>

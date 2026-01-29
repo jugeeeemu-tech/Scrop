@@ -29,6 +29,7 @@ export interface AnimatingPacket {
   protocol: string;
   size: number;
   source: string;
+  srcPort: number;
   destination: string;
   destPort: number;
   targetPort?: number;

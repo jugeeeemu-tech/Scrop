@@ -185,7 +185,7 @@ export function Mailbox({
                             <span className="text-xs text-muted-foreground">{packet.size}B</span>
                           </div>
                           <p className="text-xs text-muted-foreground truncate">
-                            {packet.source} → {packet.destination}
+                            {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
                           </p>
                         </div>
                       </div>
