@@ -24,30 +24,14 @@ impl AppState {
 fn create_backend() -> CaptureBackend {
     #[cfg(feature = "ebpf")]
     {
-        let interfaces = detect_all_interfaces();
-        eprintln!("Using eBPF capture on interfaces: {:?}", interfaces);
-        CaptureBackend::Ebpf(capture::ebpf::EbpfCapture::new(interfaces))
+        eprintln!("Using eBPF capture backend");
+        CaptureBackend::Ebpf(capture::ebpf::EbpfCapture::new())
     }
     #[cfg(not(feature = "ebpf"))]
     {
         eprintln!("Using mock capture backend");
         CaptureBackend::Mock(capture::mock::MockCapture::new())
     }
-}
-
-#[cfg(feature = "ebpf")]
-fn detect_all_interfaces() -> Vec<String> {
-    // /sys/class/net/ からすべてのネットワークインターフェースを列挙
-    if let Ok(entries) = std::fs::read_dir("/sys/class/net/") {
-        let ifaces: Vec<String> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
-        if !ifaces.is_empty() {
-            return ifaces;
-        }
-    }
-    vec!["eth0".to_string()]
 }
 
 #[tauri::command]
@@ -85,6 +69,24 @@ async fn reset_capture(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn list_interfaces(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let capture = state.capture.lock().await;
+    Ok(capture.list_interfaces())
+}
+
+#[tauri::command]
+async fn attach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
+    let capture = state.capture.lock().await;
+    capture.attach_interface(&interface).await
+}
+
+#[tauri::command]
+async fn detach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
+    let capture = state.capture.lock().await;
+    capture.detach_interface(&interface).await
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureStatusResponse {
@@ -102,7 +104,10 @@ pub fn run() {
             start_capture,
             stop_capture,
             get_capture_status,
-            reset_capture
+            reset_capture,
+            list_interfaces,
+            attach_interface,
+            detach_interface
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

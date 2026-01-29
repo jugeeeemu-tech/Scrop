@@ -85,4 +85,49 @@ impl CaptureBackend {
             CaptureBackend::Ebpf(_) => "ebpf",
         }
     }
+
+    pub async fn attach_interface(&self, name: &str) -> Result<(), String> {
+        match self {
+            CaptureBackend::Mock(_) => Ok(()),
+            #[cfg(feature = "ebpf")]
+            CaptureBackend::Ebpf(e) => e.attach_interface(name).await,
+        }
+    }
+
+    pub async fn detach_interface(&self, name: &str) -> Result<(), String> {
+        match self {
+            CaptureBackend::Mock(_) => Ok(()),
+            #[cfg(feature = "ebpf")]
+            CaptureBackend::Ebpf(e) => e.detach_interface(name).await,
+        }
+    }
+
+    pub fn list_interfaces(&self) -> Vec<String> {
+        match self {
+            CaptureBackend::Mock(_) => {
+                vec![
+                    "eth0".to_string(),
+                    "lo".to_string(),
+                    "wlan0".to_string(),
+                    "docker0".to_string(),
+                ]
+            }
+            #[cfg(feature = "ebpf")]
+            CaptureBackend::Ebpf(_) => detect_all_interfaces(),
+        }
+    }
+}
+
+/// /sys/class/net/ からすべてのネットワークインターフェースを列挙
+pub fn detect_all_interfaces() -> Vec<String> {
+    if let Ok(entries) = std::fs::read_dir("/sys/class/net/") {
+        let ifaces: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        if !ifaces.is_empty() {
+            return ifaces;
+        }
+    }
+    vec!["eth0".to_string()]
 }
