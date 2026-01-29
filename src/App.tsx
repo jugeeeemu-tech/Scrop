@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { usePacketStore } from './hooks/usePacketStore';
 import { usePortStore } from './hooks/usePortStore';
+import { useNicStore } from './hooks/useNicStore';
 import { useCaptureControl } from './hooks/useCaptureControl';
 import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
@@ -21,6 +23,10 @@ import {
   commitEditing,
   clearEditing,
 } from './stores/portStore';
+import {
+  toggleNic,
+  initializeNics,
+} from './stores/nicStore';
 
 // Detect if running in Tauri environment
 const isTauri = '__TAURI_INTERNALS__' in window;
@@ -28,7 +34,14 @@ const isTauri = '__TAURI_INTERNALS__' in window;
 function App() {
   const store = usePacketStore();
   const portStore = usePortStore();
+  const nicStore = useNicStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
+
+  useEffect(() => {
+    if (isCapturing) {
+      initializeNics();
+    }
+  }, [isCapturing]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -76,13 +89,16 @@ function App() {
         <NICLayer
           droppedPackets={store.nicDropped}
           droppedCount={store.nicDroppedCounter}
-          isActive={store.nicActive}
           dropAnimations={store.nicDropAnimations}
           incomingPackets={store.incomingPackets}
           onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
           onIncomingComplete={handleIncomingComplete}
           isDropStreamMode={store.isNicDropStreamMode}
           isPacketStreamMode={store.isIncomingStreamMode}
+          isActive={store.nicActive}
+          availableNics={nicStore.availableNics}
+          attachedNics={nicStore.attachedNics}
+          onToggleNic={toggleNic}
         />
       </main>
 

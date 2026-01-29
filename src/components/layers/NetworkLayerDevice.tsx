@@ -15,7 +15,7 @@ interface DroppedPileProps {
   isDropStreamMode?: boolean;
 }
 
-function DroppedPile({ packets, count, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
+export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
