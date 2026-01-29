@@ -182,3 +182,51 @@ impl Default for AppState {
         Self::new()
     }
 }
+
+/// eBPFキャプチャに必要な権限があるかチェックする。
+/// 権限不足の場合はエラーメッセージを返す。
+#[cfg(feature = "ebpf")]
+pub fn check_permissions() -> Result<(), String> {
+    let status = std::fs::read_to_string("/proc/self/status")
+        .map_err(|e| format!("/proc/self/status の読み取りに失敗: {}", e))?;
+
+    let cap_eff = status
+        .lines()
+        .find(|line| line.starts_with("CapEff:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+        .unwrap_or(0);
+
+    const CAP_NET_ADMIN: u64 = 1 << 12;
+    const CAP_BPF: u64 = 1 << 39;
+    const REQUIRED: u64 = CAP_NET_ADMIN | CAP_BPF;
+
+    if cap_eff & REQUIRED == REQUIRED {
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+    if cap_eff & CAP_BPF == 0 {
+        missing.push("CAP_BPF");
+    }
+    if cap_eff & CAP_NET_ADMIN == 0 {
+        missing.push("CAP_NET_ADMIN");
+    }
+
+    Err(format!(
+        "eBPF の実行に必要な権限がありません (不足: {})\n\
+         \n\
+         以下のいずれかの方法で実行してください:\n\
+         \n\
+         1. sudo で実行:\n\
+         \x20  sudo {}\n\
+         \n\
+         2. capability を付与:\n\
+         \x20  sudo setcap 'cap_bpf,cap_net_admin,cap_perfmon+ep' {}",
+        missing.join(", "),
+        std::env::args().collect::<Vec<_>>().join(" "),
+        std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<binary>".to_string()),
+    ))
+}

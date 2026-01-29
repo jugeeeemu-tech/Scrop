@@ -57,6 +57,13 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+
+    #[cfg(feature = "ebpf")]
+    if let Err(e) = scrop_capture::check_permissions() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+
     let state = Arc::new(AppState::new());
 
     let api_routes = Router::new()

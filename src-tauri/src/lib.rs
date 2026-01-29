@@ -91,6 +91,12 @@ pub struct CaptureStatusResponse {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(feature = "ebpf")]
+    if let Err(e) = scrop_capture::check_permissions() {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
