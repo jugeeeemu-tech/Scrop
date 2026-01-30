@@ -99,6 +99,23 @@ ssh -L 3000:127.0.0.1:3000 user@remote
 # ブラウザ: http://localhost:3000
 ```
 
+## テストコマンド
+
+```bash
+# フロントエンド (Vitest)
+npm test                                      # 全テスト実行
+npm run test:watch                            # ウォッチモード
+npm run test:coverage                         # カバレッジ付き実行
+
+# バックエンド (cargo test) ※ --no-default-features で mock モード
+cargo test --no-default-features -p scrop-capture   # scrop-capture 単体テスト
+cargo test --no-default-features -p scrop-server    # scrop-server 統合テスト
+cargo test --no-default-features -p scrop-capture -p scrop-server  # 両方
+
+# バックエンド カバレッジ (cargo-llvm-cov)
+cargo llvm-cov test --no-default-features -p scrop-capture -p scrop-server
+```
+
 ## REST API (scrop-server)
 
 | メソッド | パス | 処理 |
