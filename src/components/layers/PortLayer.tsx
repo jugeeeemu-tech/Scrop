@@ -264,7 +264,7 @@ export function PortLayer({
   const etcIndex = ports.findIndex((p) => p.type === 'etc');
 
   return (
-    <section className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
+    <section data-testid="port-layer" className="min-h-screen pt-20 pb-8 px-6 flex flex-col">
       <div className="flex-1 flex flex-col justify-center max-w-4xl mx-auto w-full">
         {/* Mailboxes */}
         <div className="flex flex-wrap justify-center gap-6 md:gap-10 mb-8">
