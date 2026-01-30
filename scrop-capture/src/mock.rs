@@ -5,6 +5,7 @@ use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
 use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
+use crate::CaptureError;
 
 const PACKET_GENERATION_INTERVAL_MS: u64 = 2000;
 
@@ -28,9 +29,9 @@ impl MockCapture {
         }
     }
 
-    pub fn attach_interface(&self, name: &str) -> Result<(), String> {
+    pub fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
         if !AVAILABLE_INTERFACES.contains(&name) {
-            return Err(format!("Interface {} not found", name));
+            return Err(CaptureError::InterfaceNotFound(format!("Interface {} not found", name)));
         }
         self.attached_interfaces
             .lock()
@@ -39,9 +40,9 @@ impl MockCapture {
         Ok(())
     }
 
-    pub fn detach_interface(&self, name: &str) -> Result<(), String> {
+    pub fn detach_interface(&self, name: &str) -> Result<(), CaptureError> {
         if !self.attached_interfaces.lock().unwrap().remove(name) {
-            return Err(format!("Interface {} is not attached", name));
+            return Err(CaptureError::InvalidState(format!("Interface {} is not attached", name)));
         }
         Ok(())
     }
@@ -240,7 +241,7 @@ mod tests {
         let mock = MockCapture::new();
         let result = mock.attach_interface("nonexistent");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]
@@ -248,7 +249,7 @@ mod tests {
         let mock = MockCapture::new();
         let result = mock.detach_interface("eth0");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not attached"));
+        assert!(result.unwrap_err().to_string().contains("not attached"));
     }
 
     #[test]

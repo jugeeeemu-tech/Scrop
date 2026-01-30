@@ -99,26 +99,40 @@ impl EbpfCapture {
         *self.stats.lock().unwrap() = CaptureStats::default();
     }
 
-    pub async fn attach_interface(&self, name: &str) -> Result<(), String> {
+    pub async fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
         let tx = self.command_tx.lock().unwrap().clone()
-            .ok_or_else(|| "Capture is not running".to_string())?;
+            .ok_or_else(|| CaptureError::InvalidState("Capture is not running".to_string()))?;
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(EbpfCommand::Attach {
             interface: name.to_string(),
             reply: reply_tx,
-        }).await.map_err(|_| "Failed to send attach command".to_string())?;
-        reply_rx.await.map_err(|_| "Failed to receive attach reply".to_string())?
+        }).await.map_err(|_| CaptureError::Other("Failed to send attach command".to_string()))?;
+        reply_rx.await
+            .map_err(|_| CaptureError::Other("Failed to receive attach reply".to_string()))?
+            .map_err(|msg| classify_ebpf_error(&msg))
     }
 
-    pub async fn detach_interface(&self, name: &str) -> Result<(), String> {
+    pub async fn detach_interface(&self, name: &str) -> Result<(), CaptureError> {
         let tx = self.command_tx.lock().unwrap().clone()
-            .ok_or_else(|| "Capture is not running".to_string())?;
+            .ok_or_else(|| CaptureError::InvalidState("Capture is not running".to_string()))?;
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(EbpfCommand::Detach {
             interface: name.to_string(),
             reply: reply_tx,
-        }).await.map_err(|_| "Failed to send detach command".to_string())?;
-        reply_rx.await.map_err(|_| "Failed to receive detach reply".to_string())?
+        }).await.map_err(|_| CaptureError::Other("Failed to send detach command".to_string()))?;
+        reply_rx.await
+            .map_err(|_| CaptureError::Other("Failed to receive detach reply".to_string()))?
+            .map_err(|msg| classify_ebpf_error(&msg))
+    }
+}
+
+fn classify_ebpf_error(msg: &str) -> CaptureError {
+    if msg.contains("not found") {
+        CaptureError::InterfaceNotFound(msg.to_string())
+    } else if msg.contains("not attached") {
+        CaptureError::InvalidState(msg.to_string())
+    } else {
+        CaptureError::Other(msg.to_string())
     }
 }
 

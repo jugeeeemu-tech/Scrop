@@ -153,7 +153,7 @@ test.describe('NICアタッチ/デタッチとパケットフロー', () => {
 
   test('存在しないインターフェースのアタッチはエラーを返す', async ({ page }) => {
     const res = await page.request.post('/api/interfaces/nonexistent/attach');
-    expect(res.status()).toBe(500);
+    expect(res.status()).toBe(400);
     const body = await res.json();
     expect(body.error).toContain('not found');
   });
@@ -168,7 +168,7 @@ test.describe('NICアタッチ/デタッチとパケットフロー', () => {
 
     // 既にデタッチ済みのeth0をデタッチしようとするとエラー
     const detachRes = await page.request.post('/api/interfaces/eth0/detach');
-    expect(detachRes.status()).toBe(500);
+    expect(detachRes.status()).toBe(400);
     const body = await detachRes.json();
     expect(body.error).toContain('not attached');
   });

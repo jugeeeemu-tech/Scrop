@@ -15,6 +15,7 @@ use types::{CapturedPacket, CaptureStats};
 pub enum CaptureError {
     PermissionDenied(String),
     InterfaceNotFound(String),
+    InvalidState(String),
     #[cfg(feature = "ebpf")]
     EbpfLoadFailed(String),
     Other(String),
@@ -25,6 +26,7 @@ impl std::fmt::Display for CaptureError {
         match self {
             CaptureError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
             CaptureError::InterfaceNotFound(msg) => write!(f, "Interface not found: {}", msg),
+            CaptureError::InvalidState(msg) => write!(f, "Invalid state: {}", msg),
             #[cfg(feature = "ebpf")]
             CaptureError::EbpfLoadFailed(msg) => write!(f, "eBPF load failed: {}", msg),
             CaptureError::Other(msg) => write!(f, "{}", msg),
@@ -94,7 +96,7 @@ impl CaptureBackend {
         }
     }
 
-    pub async fn attach_interface(&self, name: &str) -> Result<(), String> {
+    pub async fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
         match self {
             #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.attach_interface(name),
@@ -103,7 +105,7 @@ impl CaptureBackend {
         }
     }
 
-    pub async fn detach_interface(&self, name: &str) -> Result<(), String> {
+    pub async fn detach_interface(&self, name: &str) -> Result<(), CaptureError> {
         match self {
             #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.detach_interface(name),
@@ -181,6 +183,9 @@ mod tests {
 
         let err = CaptureError::InterfaceNotFound("eth0".to_string());
         assert_eq!(format!("{}", err), "Interface not found: eth0");
+
+        let err = CaptureError::InvalidState("not running".to_string());
+        assert_eq!(format!("{}", err), "Invalid state: not running");
 
         let err = CaptureError::Other("something".to_string());
         assert_eq!(format!("{}", err), "something");

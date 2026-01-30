@@ -89,13 +89,13 @@ async fn list_interfaces(state: State<'_, AppState>) -> Result<Vec<String>, Stri
 #[tauri::command]
 async fn attach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
     let capture = state.inner.capture.lock().await;
-    capture.attach_interface(&interface).await
+    capture.attach_interface(&interface).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn detach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
     let capture = state.inner.capture.lock().await;
-    capture.detach_interface(&interface).await
+    capture.detach_interface(&interface).await.map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]

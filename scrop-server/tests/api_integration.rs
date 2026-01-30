@@ -55,7 +55,7 @@ mod scrop_server_routes {
     use axum::http::StatusCode;
     use serde::Serialize;
 
-    use scrop_capture::AppState;
+    use scrop_capture::{AppState, CaptureError};
     use scrop_capture::types::CaptureStats;
 
     #[derive(Serialize)]
@@ -71,20 +71,32 @@ mod scrop_server_routes {
         pub message: String,
     }
 
-    #[derive(Serialize)]
     pub struct ApiError {
-        pub error: String,
+        status: StatusCode,
+        error: String,
+    }
+
+    #[derive(Serialize)]
+    struct ApiErrorBody {
+        error: String,
     }
 
     impl IntoResponse for ApiError {
         fn into_response(self) -> Response {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(self)).into_response()
+            (self.status, Json(ApiErrorBody { error: self.error })).into_response()
         }
     }
 
-    impl From<String> for ApiError {
-        fn from(msg: String) -> Self {
-            Self { error: msg }
+    impl From<CaptureError> for ApiError {
+        fn from(err: CaptureError) -> Self {
+            let status = match &err {
+                CaptureError::InterfaceNotFound(_) | CaptureError::InvalidState(_) => StatusCode::BAD_REQUEST,
+                CaptureError::PermissionDenied(_) => StatusCode::FORBIDDEN,
+                #[cfg(feature = "ebpf")]
+                CaptureError::EbpfLoadFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                CaptureError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            Self { status, error: err.to_string() }
         }
     }
 
@@ -544,7 +556,7 @@ async fn attach_unknown_interface_returns_error() {
     let (app, _state) = build_stateful_test_app();
 
     let response = post_request(&app, "/api/interfaces/nonexistent/attach").await;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -552,7 +564,7 @@ async fn detach_unattached_interface_returns_error() {
     let (app, _state) = build_stateful_test_app();
 
     let response = post_request(&app, "/api/interfaces/eth0/detach").await;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
