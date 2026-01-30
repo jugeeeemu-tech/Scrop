@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -7,10 +8,13 @@ use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
 
 const PACKET_GENERATION_INTERVAL_MS: u64 = 2000;
 
+pub const AVAILABLE_INTERFACES: &[&str] = &["eth0", "lo", "wlan0", "docker0"];
+
 pub struct MockCapture {
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
+    attached_interfaces: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl MockCapture {
@@ -20,7 +24,34 @@ impl MockCapture {
             is_running: Arc::new(AtomicBool::new(false)),
             packet_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(std::sync::Mutex::new(CaptureStats::default())),
+            attached_interfaces: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
+    }
+
+    pub fn attach_interface(&self, name: &str) -> Result<(), String> {
+        if !AVAILABLE_INTERFACES.contains(&name) {
+            return Err(format!("Interface {} not found", name));
+        }
+        self.attached_interfaces
+            .lock()
+            .unwrap()
+            .insert(name.to_string());
+        Ok(())
+    }
+
+    pub fn detach_interface(&self, name: &str) -> Result<(), String> {
+        if !self.attached_interfaces.lock().unwrap().remove(name) {
+            return Err(format!("Interface {} is not attached", name));
+        }
+        Ok(())
+    }
+
+    pub fn attached_interfaces(&self) -> HashSet<String> {
+        self.attached_interfaces.lock().unwrap().clone()
+    }
+
+    pub fn list_interfaces(&self) -> Vec<String> {
+        AVAILABLE_INTERFACES.iter().map(|s| s.to_string()).collect()
     }
 
     pub fn is_running(&self) -> bool {
@@ -39,9 +70,16 @@ impl MockCapture {
         let is_running = Arc::clone(&self.is_running);
         let packet_counter = Arc::clone(&self.packet_counter);
         let stats = Arc::clone(&self.stats);
+        let attached_interfaces = Arc::clone(&self.attached_interfaces);
 
         tokio::spawn(async move {
             while is_running.load(Ordering::SeqCst) {
+                // Skip packet generation if no interfaces are attached
+                if attached_interfaces.lock().unwrap().is_empty() {
+                    sleep(Duration::from_millis(PACKET_GENERATION_INTERVAL_MS)).await;
+                    continue;
+                }
+
                 let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
                 let packet = AnimatingPacket::generate(counter);
 
@@ -125,6 +163,7 @@ mod tests {
     #[tokio::test]
     async fn broadcast_receives_packets() {
         let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
         let (tx, mut rx) = broadcast::channel(16);
         mock.start(tx);
 
@@ -144,6 +183,7 @@ mod tests {
     #[tokio::test]
     async fn stats_accumulate() {
         let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
         let (tx, mut rx) = broadcast::channel(64);
         mock.start(tx);
 
@@ -164,6 +204,7 @@ mod tests {
     #[tokio::test]
     async fn reset_clears_state() {
         let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
         let (tx, mut rx) = broadcast::channel(16);
         mock.start(tx);
 
@@ -180,5 +221,95 @@ mod tests {
         assert_eq!(stats_after.nic_dropped, 0);
         assert_eq!(stats_after.fw_dropped, 0);
         assert_eq!(stats_after.delivered, 0);
+    }
+
+    #[tokio::test]
+    async fn no_packets_without_attached_interfaces() {
+        let mock = MockCapture::new();
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+
+        let result = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
+        mock.stop();
+        assert!(result.is_err(), "Should not receive packets without attached interfaces");
+        assert_eq!(mock.get_stats().total_packets, 0);
+    }
+
+    #[test]
+    fn attach_unknown_interface_returns_error() {
+        let mock = MockCapture::new();
+        let result = mock.attach_interface("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn detach_unattached_interface_returns_error() {
+        let mock = MockCapture::new();
+        let result = mock.detach_interface("eth0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not attached"));
+    }
+
+    #[test]
+    fn double_attach_is_idempotent() {
+        let mock = MockCapture::new();
+        assert!(mock.attach_interface("eth0").is_ok());
+        assert!(mock.attach_interface("eth0").is_ok());
+        assert_eq!(mock.attached_interfaces().len(), 1);
+    }
+
+    #[test]
+    fn attach_then_detach_lifecycle() {
+        let mock = MockCapture::new();
+        assert!(mock.attached_interfaces().is_empty());
+
+        mock.attach_interface("eth0").unwrap();
+        assert!(mock.attached_interfaces().contains("eth0"));
+
+        mock.attach_interface("lo").unwrap();
+        assert_eq!(mock.attached_interfaces().len(), 2);
+
+        mock.detach_interface("eth0").unwrap();
+        assert_eq!(mock.attached_interfaces().len(), 1);
+        assert!(!mock.attached_interfaces().contains("eth0"));
+        assert!(mock.attached_interfaces().contains("lo"));
+
+        mock.detach_interface("lo").unwrap();
+        assert!(mock.attached_interfaces().is_empty());
+    }
+
+    #[tokio::test]
+    async fn packets_stop_after_detach_all() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+
+        // Wait for at least one packet
+        let result = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive packets with attached interface");
+
+        // Detach all interfaces
+        mock.detach_interface("eth0").unwrap();
+
+        // Reset stats to check no new packets arrive
+        mock.reset();
+
+        // Wait and verify no new packets
+        let result = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
+        mock.stop();
+        assert!(result.is_err(), "Should not receive packets after detaching all interfaces");
+        assert_eq!(mock.get_stats().total_packets, 0);
+    }
+
+    #[test]
+    fn list_interfaces_returns_all_available() {
+        let mock = MockCapture::new();
+        let interfaces = mock.list_interfaces();
+        assert_eq!(interfaces.len(), AVAILABLE_INTERFACES.len());
+        for iface in AVAILABLE_INTERFACES {
+            assert!(interfaces.contains(&iface.to_string()));
+        }
     }
 }

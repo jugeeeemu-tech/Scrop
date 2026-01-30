@@ -97,10 +97,7 @@ impl CaptureBackend {
     pub async fn attach_interface(&self, name: &str) -> Result<(), String> {
         match self {
             #[cfg(not(feature = "ebpf"))]
-            CaptureBackend::Mock(_) => {
-                let _ = name;
-                Ok(())
-            }
+            CaptureBackend::Mock(m) => m.attach_interface(name),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.attach_interface(name).await,
         }
@@ -109,10 +106,7 @@ impl CaptureBackend {
     pub async fn detach_interface(&self, name: &str) -> Result<(), String> {
         match self {
             #[cfg(not(feature = "ebpf"))]
-            CaptureBackend::Mock(_) => {
-                let _ = name;
-                Ok(())
-            }
+            CaptureBackend::Mock(m) => m.detach_interface(name),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(e) => e.detach_interface(name).await,
         }
@@ -121,14 +115,7 @@ impl CaptureBackend {
     pub fn list_interfaces(&self) -> Vec<String> {
         match self {
             #[cfg(not(feature = "ebpf"))]
-            CaptureBackend::Mock(_) => {
-                vec![
-                    "eth0".to_string(),
-                    "lo".to_string(),
-                    "wlan0".to_string(),
-                    "docker0".to_string(),
-                ]
-            }
+            CaptureBackend::Mock(m) => m.list_interfaces(),
             #[cfg(feature = "ebpf")]
             CaptureBackend::Ebpf(_) => detect_all_interfaces(),
         }
@@ -234,15 +221,19 @@ mod tests {
     async fn capture_backend_attach_detach() {
         let state = AppState::new();
         let capture = state.capture.lock().await;
-        // Mock backend always returns Ok
         assert!(capture.attach_interface("eth0").await.is_ok());
         assert!(capture.detach_interface("eth0").await.is_ok());
+        // Detach without prior attach returns error
+        assert!(capture.detach_interface("eth0").await.is_err());
+        // Attach unknown interface returns error
+        assert!(capture.attach_interface("nonexistent").await.is_err());
     }
 
     #[tokio::test]
     async fn capture_backend_start_stop() {
         let state = AppState::new();
         let capture = state.capture.lock().await;
+        assert!(capture.attach_interface("eth0").await.is_ok());
         assert!(!capture.is_running());
         capture.start(state.event_tx.clone());
         assert!(capture.is_running());
@@ -254,6 +245,7 @@ mod tests {
     async fn capture_backend_reset() {
         let state = AppState::new();
         let capture = state.capture.lock().await;
+        assert!(capture.attach_interface("eth0").await.is_ok());
         capture.start(state.event_tx.clone());
         capture.stop();
         capture.reset();
