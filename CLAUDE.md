@@ -114,6 +114,10 @@ cargo test --no-default-features -p scrop-capture -p scrop-server  # 両方
 
 # バックエンド カバレッジ (cargo-llvm-cov)
 cargo llvm-cov test --no-default-features -p scrop-capture -p scrop-server
+
+# E2E テスト (Playwright) ※ mockサーバを自動起動
+npm run test:e2e                              # E2Eテスト実行
+npm run test:e2e:ui                           # UIモードで実行
 ```
 
 ## REST API (scrop-server)
