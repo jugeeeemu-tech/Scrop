@@ -35,16 +35,22 @@ export function createTauriTransport(): Transport {
 
     subscribePackets(onPacket: (data: CapturedPacket) => void): () => void {
       let unlisten: (() => void) | null = null;
+      let disposed = false;
 
       import('@tauri-apps/api/event').then(({ listen }) => {
         listen<CapturedPacket>('packet:captured', (event) => {
           onPacket(event.payload);
         }).then((fn) => {
-          unlisten = fn;
+          if (disposed) {
+            fn();
+          } else {
+            unlisten = fn;
+          }
         });
       });
 
       return () => {
+        disposed = true;
         if (unlisten) unlisten();
       };
     },
