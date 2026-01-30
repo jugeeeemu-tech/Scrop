@@ -88,3 +88,97 @@ impl MockCapture {
         *self.stats.lock().unwrap() = CaptureStats::default();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_stopped_instance() {
+        let mock = MockCapture::new();
+        assert!(!mock.is_running());
+        let stats = mock.get_stats();
+        assert_eq!(stats.total_packets, 0);
+    }
+
+    #[tokio::test]
+    async fn start_stop_lifecycle() {
+        let mock = MockCapture::new();
+        let (tx, _rx) = broadcast::channel(16);
+        mock.start(tx);
+        assert!(mock.is_running());
+        mock.stop();
+        assert!(!mock.is_running());
+    }
+
+    #[tokio::test]
+    async fn double_start_is_idempotent() {
+        let mock = MockCapture::new();
+        let (tx, _rx) = broadcast::channel(16);
+        mock.start(tx.clone());
+        assert!(mock.is_running());
+        mock.start(tx); // second call should not panic
+        assert!(mock.is_running());
+        mock.stop();
+    }
+
+    #[tokio::test]
+    async fn broadcast_receives_packets() {
+        let mock = MockCapture::new();
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+
+        // Wait for at least one packet
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            rx.recv(),
+        )
+        .await;
+
+        mock.stop();
+        assert!(result.is_ok(), "Timed out waiting for packet");
+        let captured = result.unwrap().unwrap();
+        assert!(!captured.packet.id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stats_accumulate() {
+        let mock = MockCapture::new();
+        let (tx, mut rx) = broadcast::channel(64);
+        mock.start(tx);
+
+        // Receive a few packets
+        for _ in 0..3 {
+            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        }
+
+        mock.stop();
+        let stats = mock.get_stats();
+        assert!(stats.total_packets >= 3, "Expected at least 3 packets, got {}", stats.total_packets);
+        assert_eq!(
+            stats.total_packets,
+            stats.nic_dropped + stats.fw_dropped + stats.delivered
+        );
+    }
+
+    #[tokio::test]
+    async fn reset_clears_state() {
+        let mock = MockCapture::new();
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+
+        // Wait for at least one packet
+        let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        mock.stop();
+
+        let stats_before = mock.get_stats();
+        assert!(stats_before.total_packets > 0);
+
+        mock.reset();
+        let stats_after = mock.get_stats();
+        assert_eq!(stats_after.total_packets, 0);
+        assert_eq!(stats_after.nic_dropped, 0);
+        assert_eq!(stats_after.fw_dropped, 0);
+        assert_eq!(stats_after.delivered, 0);
+    }
+}

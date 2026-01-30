@@ -183,6 +183,85 @@ impl Default for AppState {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_error_display() {
+        let err = CaptureError::PermissionDenied("test".to_string());
+        assert_eq!(format!("{}", err), "Permission denied: test");
+
+        let err = CaptureError::InterfaceNotFound("eth0".to_string());
+        assert_eq!(format!("{}", err), "Interface not found: eth0");
+
+        let err = CaptureError::Other("something".to_string());
+        assert_eq!(format!("{}", err), "something");
+    }
+
+    #[test]
+    fn detect_all_interfaces_returns_non_empty() {
+        let ifaces = detect_all_interfaces();
+        assert!(!ifaces.is_empty());
+    }
+
+    #[test]
+    fn app_state_new_does_not_panic() {
+        let _state = AppState::new();
+    }
+
+    #[test]
+    fn app_state_default_does_not_panic() {
+        let _state = AppState::default();
+    }
+
+    #[tokio::test]
+    async fn capture_backend_mock_mode() {
+        let state = AppState::new();
+        let capture = state.capture.lock().await;
+        assert_eq!(capture.mode(), "mock");
+    }
+
+    #[tokio::test]
+    async fn capture_backend_list_interfaces() {
+        let state = AppState::new();
+        let capture = state.capture.lock().await;
+        let ifaces = capture.list_interfaces();
+        assert!(!ifaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn capture_backend_attach_detach() {
+        let state = AppState::new();
+        let capture = state.capture.lock().await;
+        // Mock backend always returns Ok
+        assert!(capture.attach_interface("eth0").await.is_ok());
+        assert!(capture.detach_interface("eth0").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn capture_backend_start_stop() {
+        let state = AppState::new();
+        let capture = state.capture.lock().await;
+        assert!(!capture.is_running());
+        capture.start(state.event_tx.clone());
+        assert!(capture.is_running());
+        capture.stop();
+        assert!(!capture.is_running());
+    }
+
+    #[tokio::test]
+    async fn capture_backend_reset() {
+        let state = AppState::new();
+        let capture = state.capture.lock().await;
+        capture.start(state.event_tx.clone());
+        capture.stop();
+        capture.reset();
+        let stats = capture.get_stats();
+        assert_eq!(stats.total_packets, 0);
+    }
+}
+
 /// eBPFキャプチャに必要な権限があるかチェックする。
 /// 権限不足の場合はエラーメッセージを返す。
 #[cfg(feature = "ebpf")]
