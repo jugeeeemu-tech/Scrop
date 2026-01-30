@@ -7,17 +7,14 @@ import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
 import { useRef, useState } from 'react';
 import { Reorder } from 'framer-motion';
-import type { AnimatingPacket, PortInfo } from '../../types';
+import type { PortInfo } from '../../types';
 import { ETC_PORT_KEY, getPortKey } from '../../constants';
 import { usePortPositionStore } from '../../hooks';
+import { usePortLayerStore } from '../../hooks/usePortLayerStore';
+import { handleFwToPortComplete } from '../../stores/packetStore';
 
 interface PortLayerProps {
   ports: PortInfo[];
-  deliveredPackets: Record<number, AnimatingPacket[]>;
-  deliveredCounterPerPort: Record<number, number>;
-  animatingPackets: AnimatingPacket[];
-  onAnimationComplete: (packetId: string, targetPort: number) => void;
-  streamingPorts?: number[];
   editingIndex: number | null;
   editingField: 'port' | 'label' | null;
   onAddPort: () => void;
@@ -32,11 +29,6 @@ interface PortLayerProps {
 
 export function PortLayer({
   ports,
-  deliveredPackets,
-  deliveredCounterPerPort,
-  animatingPackets,
-  onAnimationComplete,
-  streamingPorts = [],
   editingIndex,
   editingField,
   onAddPort,
@@ -48,6 +40,7 @@ export function PortLayer({
   onRemovePort,
   onReorderPorts,
 }: PortLayerProps) {
+  const { deliveredPackets, deliveredCounterPerPort, fwToPortPackets: animatingPackets, streamingPorts } = usePortLayerStore();
   const animationZoneRef = useRef<HTMLDivElement>(null);
   const { mailboxPositions, setMailboxRef } = usePortPositionStore(animationZoneRef, ports.length);
 
@@ -158,7 +151,7 @@ export function PortLayer({
               <AnimatedPacket
                 key={packet.id}
                 targetX={mailboxPositions[portKeyToIndex(packet.targetPort ?? ETC_PORT_KEY)] || 0}
-                onComplete={() => onAnimationComplete(packet.id, packet.targetPort ?? ETC_PORT_KEY)}
+                onComplete={() => handleFwToPortComplete(packet.id, packet.targetPort ?? ETC_PORT_KEY)}
               />
             ))}
         </div>

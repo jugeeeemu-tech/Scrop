@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { usePacketStore } from './hooks/usePacketStore';
 import { usePortStore } from './hooks/usePortStore';
 import { useNicStore } from './hooks/useNicStore';
 import { useCaptureControl } from './hooks/useCaptureControl';
@@ -7,12 +6,6 @@ import { Header } from './components/layout/Header';
 import { PortLayer } from './components/layers/PortLayer';
 import { FWLayer } from './components/layers/FWLayer';
 import { NICLayer } from './components/layers/NICLayer';
-import {
-  handleFwToPortComplete,
-  handleNicToFwComplete,
-  handleIncomingComplete,
-  handleDropAnimationComplete,
-} from './stores/packetStore';
 import {
   addPort,
   updatePort,
@@ -28,7 +21,6 @@ import {
 } from './stores/nicStore';
 
 function App() {
-  const store = usePacketStore();
   const portStore = usePortStore();
   const nicStore = useNicStore();
   const { isCapturing, toggleCapture, resetCapture } = useCaptureControl();
@@ -43,21 +35,13 @@ function App() {
     <div className="min-h-screen bg-background">
       <Header
         isCapturing={isCapturing}
-        deliveredCount={store.deliveredCounter}
-        droppedCount={store.droppedCounter}
         onToggleCapture={toggleCapture}
         onReset={resetCapture}
-        error={store.error}
       />
 
       <main>
         <PortLayer
           ports={portStore.ports}
-          deliveredPackets={store.deliveredPackets}
-          deliveredCounterPerPort={store.deliveredCounterPerPort}
-          animatingPackets={store.fwToPortPackets}
-          onAnimationComplete={handleFwToPortComplete}
-          streamingPorts={store.streamingPorts}
           editingIndex={portStore.editingIndex}
           editingField={portStore.editingField}
           onAddPort={addPort}
@@ -70,28 +54,9 @@ function App() {
           onReorderPorts={reorderPorts}
         />
 
-        <FWLayer
-          droppedPackets={store.firewallDropped}
-          droppedCount={store.fwDroppedCounter}
-          isActive={store.fwActive}
-          dropAnimations={store.fwDropAnimations}
-          risingPackets={store.nicToFwPackets}
-          onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'fw')}
-          onRisingComplete={handleNicToFwComplete}
-          isDropStreamMode={store.isFwDropStreamMode}
-          isPacketStreamMode={store.isNicToFwStreamMode}
-        />
+        <FWLayer />
 
         <NICLayer
-          droppedPackets={store.nicDropped}
-          droppedCount={store.nicDroppedCounter}
-          dropAnimations={store.nicDropAnimations}
-          incomingPackets={store.incomingPackets}
-          onDropAnimationComplete={(id) => handleDropAnimationComplete(id, 'nic')}
-          onIncomingComplete={handleIncomingComplete}
-          isDropStreamMode={store.isNicDropStreamMode}
-          isPacketStreamMode={store.isIncomingStreamMode}
-          isActive={store.nicActive}
           availableNics={nicStore.availableNics}
           attachedNics={nicStore.attachedNics}
           onToggleNic={toggleNic}

@@ -1,6 +1,10 @@
 export { useLayerCenterX } from './useLayerCenterX';
 export { useCaptureControl } from './useCaptureControl';
 export { usePacketStore } from './usePacketStore';
+export { useHeaderStore } from './useHeaderStore';
+export { usePortLayerStore } from './usePortLayerStore';
+export { useFWLayerStore } from './useFWLayerStore';
+export { useNICLayerStore } from './useNICLayerStore';
 export { usePortStore } from './usePortStore';
 export { useNicStore } from './useNicStore';
 export { usePortPositionStore } from './usePortPositionStore';

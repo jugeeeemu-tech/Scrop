@@ -1,16 +1,16 @@
 import { Activity, AlertCircle, Pause, Play, RotateCcw } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useHeaderStore } from '../../hooks/useHeaderStore';
 
 interface HeaderProps {
   isCapturing: boolean;
-  deliveredCount: number;
-  droppedCount: number;
   onToggleCapture: () => void;
   onReset: () => void;
-  error?: string | null;
 }
 
-export function Header({ isCapturing, deliveredCount, droppedCount, onToggleCapture, onReset, error }: HeaderProps) {
+export function Header({ isCapturing, onToggleCapture, onReset }: HeaderProps) {
+  const { deliveredCounter: deliveredCount, droppedCounter: droppedCount, error } = useHeaderStore();
+
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-sm border-b border-border">
       <div className="h-[var(--header-height)] max-w-6xl mx-auto px-6 flex items-center justify-between">

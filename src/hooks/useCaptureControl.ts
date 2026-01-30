@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import {
   subscribe,
-  getSnapshot,
-  getServerSnapshot,
+  selectIsCapturing,
   toggleCapture as storeToggleCapture,
   resetCapture as storeResetCapture,
 } from '../stores/packetStore';
@@ -14,13 +13,13 @@ export interface UseCaptureControlResult {
 }
 
 export function useCaptureControl(): UseCaptureControlResult {
-  const store = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const isCapturing = useSyncExternalStore(subscribe, selectIsCapturing);
 
   const toggleCapture = () => storeToggleCapture();
   const resetCapture = () => storeResetCapture();
 
   return {
-    isCapturing: store.isCapturing,
+    isCapturing,
     toggleCapture,
     resetCapture,
   };
