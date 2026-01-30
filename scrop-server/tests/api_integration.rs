@@ -290,9 +290,38 @@ async fn attach_interface_returns_200() {
 }
 
 #[tokio::test]
-async fn detach_interface_returns_200() {
-    let app = helpers::build_test_app();
+async fn detach_interface_after_attach_returns_200() {
+    let state = Arc::new(AppState::new());
 
+    let api_routes = Router::new()
+        .route(
+            "/interfaces/{name}/attach",
+            post(scrop_server_routes::attach_interface),
+        )
+        .route(
+            "/interfaces/{name}/detach",
+            post(scrop_server_routes::detach_interface),
+        );
+
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .with_state(state);
+
+    // Attach first
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/interfaces/eth0/attach")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Then detach
     let response = app
         .oneshot(
             Request::builder()
@@ -366,4 +395,173 @@ async fn start_then_status_shows_capturing() {
         )
         .await
         .unwrap();
+}
+
+// --- Stateful integration tests for attach/packet-generation behavior ---
+
+fn build_stateful_test_app() -> (Router, Arc<AppState>) {
+    let state = Arc::new(AppState::new());
+
+    let api_routes = Router::new()
+        .route("/capture/start", post(scrop_server_routes::start_capture))
+        .route("/capture/stop", post(scrop_server_routes::stop_capture))
+        .route(
+            "/capture/status",
+            get(scrop_server_routes::get_capture_status),
+        )
+        .route("/capture/reset", post(scrop_server_routes::reset_capture))
+        .route("/interfaces", get(scrop_server_routes::list_interfaces))
+        .route(
+            "/interfaces/{name}/attach",
+            post(scrop_server_routes::attach_interface),
+        )
+        .route(
+            "/interfaces/{name}/detach",
+            post(scrop_server_routes::detach_interface),
+        );
+
+    let app = Router::new()
+        .nest("/api", api_routes)
+        .with_state(state.clone());
+
+    (app, state)
+}
+
+async fn post_request(app: &Router, uri: &str) -> axum::http::Response<Body> {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn get_request(app: &Router, uri: &str) -> axum::http::Response<Body> {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn get_status_json(app: &Router) -> serde_json::Value {
+    let response = get_request(app, "/api/capture/status").await;
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
+#[tokio::test]
+async fn attach_then_start_produces_packets() {
+    let (app, _state) = build_stateful_test_app();
+
+    // Attach interface
+    let response = post_request(&app, "/api/interfaces/eth0/attach").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Start capture
+    let response = post_request(&app, "/api/capture/start").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Poll for packets (up to 10 seconds)
+    let mut found_packets = false;
+    for _ in 0..20 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let json = get_status_json(&app).await;
+        if json["stats"]["totalPackets"].as_u64().unwrap_or(0) > 0 {
+            found_packets = true;
+            break;
+        }
+    }
+
+    // Cleanup
+    let _ = post_request(&app, "/api/capture/stop").await;
+    assert!(found_packets, "Expected packets to be generated after attach + start");
+}
+
+#[tokio::test]
+async fn start_without_attach_produces_no_packets() {
+    let (app, _state) = build_stateful_test_app();
+
+    // Start capture without attaching any interface
+    let response = post_request(&app, "/api/capture/start").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Wait and verify no packets
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let json = get_status_json(&app).await;
+    let total = json["stats"]["totalPackets"].as_u64().unwrap_or(0);
+
+    // Cleanup
+    let _ = post_request(&app, "/api/capture/stop").await;
+    assert_eq!(total, 0, "Expected no packets without attached interfaces");
+}
+
+#[tokio::test]
+async fn detach_all_stops_packet_generation() {
+    let (app, _state) = build_stateful_test_app();
+
+    // Attach and start
+    let _ = post_request(&app, "/api/interfaces/eth0/attach").await;
+    let _ = post_request(&app, "/api/capture/start").await;
+
+    // Wait for packets
+    let mut found_packets = false;
+    for _ in 0..20 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let json = get_status_json(&app).await;
+        if json["stats"]["totalPackets"].as_u64().unwrap_or(0) > 0 {
+            found_packets = true;
+            break;
+        }
+    }
+    assert!(found_packets, "Should have received packets");
+
+    // Detach and reset
+    let _ = post_request(&app, "/api/interfaces/eth0/detach").await;
+    let _ = post_request(&app, "/api/capture/reset").await;
+
+    // Restart and verify no new packets
+    let _ = post_request(&app, "/api/capture/start").await;
+    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let json = get_status_json(&app).await;
+    let total = json["stats"]["totalPackets"].as_u64().unwrap_or(0);
+
+    // Cleanup
+    let _ = post_request(&app, "/api/capture/stop").await;
+    assert_eq!(total, 0, "Expected no packets after detaching all interfaces");
+}
+
+#[tokio::test]
+async fn attach_unknown_interface_returns_error() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = post_request(&app, "/api/interfaces/nonexistent/attach").await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn detach_unattached_interface_returns_error() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = post_request(&app, "/api/interfaces/eth0/detach").await;
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn double_attach_is_idempotent() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response1 = post_request(&app, "/api/interfaces/eth0/attach").await;
+    assert_eq!(response1.status(), StatusCode::OK);
+
+    let response2 = post_request(&app, "/api/interfaces/eth0/attach").await;
+    assert_eq!(response2.status(), StatusCode::OK);
 }
