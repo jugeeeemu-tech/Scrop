@@ -38,6 +38,11 @@ mod helpers {
             .route(
                 "/interfaces/{name}/detach",
                 post(scrop_server_routes::detach_interface),
+            )
+            .route(
+                "/mock/config",
+                get(scrop_server_routes::get_mock_config)
+                    .put(scrop_server_routes::update_mock_config),
             );
 
         Router::new().nest("/api", api_routes).with_state(state)
@@ -177,6 +182,49 @@ mod scrop_server_routes {
             .map_err(ApiError::from)?;
         Ok(Json(MessageResponse {
             message: format!("Interface {} detached", name),
+        }))
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct UpdateMockConfigRequest {
+        pub interval_ms: Option<u64>,
+        pub nic_drop_rate: Option<f64>,
+        pub fw_drop_rate: Option<f64>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct MockConfigResponse {
+        pub interval_ms: u64,
+        pub nic_drop_rate: f64,
+        pub fw_drop_rate: f64,
+    }
+
+    pub async fn get_mock_config(
+        State(state): State<Arc<AppState>>,
+    ) -> Result<Json<MockConfigResponse>, ApiError> {
+        let capture = state.capture.lock().await;
+        let config = capture.get_mock_config();
+        Ok(Json(MockConfigResponse {
+            interval_ms: config.interval_ms,
+            nic_drop_rate: config.nic_drop_rate,
+            fw_drop_rate: config.fw_drop_rate,
+        }))
+    }
+
+    pub async fn update_mock_config(
+        State(state): State<Arc<AppState>>,
+        Json(req): Json<UpdateMockConfigRequest>,
+    ) -> Result<Json<MockConfigResponse>, ApiError> {
+        let capture = state.capture.lock().await;
+        let config = capture
+            .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate)
+            .map_err(ApiError::from)?;
+        Ok(Json(MockConfigResponse {
+            interval_ms: config.interval_ms,
+            nic_drop_rate: config.nic_drop_rate,
+            fw_drop_rate: config.fw_drop_rate,
         }))
     }
 }
@@ -430,6 +478,11 @@ fn build_stateful_test_app() -> (Router, Arc<AppState>) {
         .route(
             "/interfaces/{name}/detach",
             post(scrop_server_routes::detach_interface),
+        )
+        .route(
+            "/mock/config",
+            get(scrop_server_routes::get_mock_config)
+                .put(scrop_server_routes::update_mock_config),
         );
 
     let app = Router::new()
@@ -458,6 +511,20 @@ async fn get_request(app: &Router, uri: &str) -> axum::http::Response<Body> {
             Request::builder()
                 .uri(uri)
                 .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+async fn put_json_request(app: &Router, uri: &str, json_body: &str) -> axum::http::Response<Body> {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(json_body.to_string()))
                 .unwrap(),
         )
         .await
@@ -576,4 +643,93 @@ async fn double_attach_is_idempotent() {
 
     let response2 = post_request(&app, "/api/interfaces/eth0/attach").await;
     assert_eq!(response2.status(), StatusCode::OK);
+}
+
+// --- Mock config API tests ---
+
+#[tokio::test]
+async fn get_mock_config_returns_defaults() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = get_request(&app, "/api/mock/config").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["intervalMs"], 2000);
+    assert_eq!(json["nicDropRate"], 0.1);
+    assert_eq!(json["fwDropRate"], 0.15);
+}
+
+#[tokio::test]
+async fn put_mock_config_partial_update() {
+    let (app, _state) = build_stateful_test_app();
+
+    // Update only intervalMs
+    let response = put_json_request(&app, "/api/mock/config", r#"{"intervalMs": 100}"#).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["intervalMs"], 100);
+    assert_eq!(json["nicDropRate"], 0.1);
+    assert_eq!(json["fwDropRate"], 0.15);
+}
+
+#[tokio::test]
+async fn put_mock_config_full_update() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = put_json_request(
+        &app,
+        "/api/mock/config",
+        r#"{"intervalMs": 50, "nicDropRate": 0.3, "fwDropRate": 0.2}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["intervalMs"], 50);
+    assert_eq!(json["nicDropRate"], 0.3);
+    assert_eq!(json["fwDropRate"], 0.2);
+
+    // Verify GET reflects the update
+    let response = get_request(&app, "/api/mock/config").await;
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["intervalMs"], 50);
+    assert_eq!(json["nicDropRate"], 0.3);
+    assert_eq!(json["fwDropRate"], 0.2);
+}
+
+#[tokio::test]
+async fn put_mock_config_validation_interval_zero() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response =
+        put_json_request(&app, "/api/mock/config", r#"{"intervalMs": 0}"#).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn put_mock_config_validation_rate_out_of_range() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response =
+        put_json_request(&app, "/api/mock/config", r#"{"nicDropRate": 1.5}"#).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn put_mock_config_validation_combined_rates_exceed_one() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = put_json_request(
+        &app,
+        "/api/mock/config",
+        r#"{"nicDropRate": 0.6, "fwDropRate": 0.5}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

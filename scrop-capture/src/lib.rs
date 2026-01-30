@@ -122,6 +122,25 @@ impl CaptureBackend {
             CaptureBackend::Ebpf(_) => detect_all_interfaces(),
         }
     }
+
+    #[cfg(not(feature = "ebpf"))]
+    pub fn get_mock_config(&self) -> mock::MockConfig {
+        match self {
+            CaptureBackend::Mock(m) => m.get_config(),
+        }
+    }
+
+    #[cfg(not(feature = "ebpf"))]
+    pub fn update_mock_config(
+        &self,
+        interval_ms: Option<u64>,
+        nic_drop_rate: Option<f64>,
+        fw_drop_rate: Option<f64>,
+    ) -> Result<mock::MockConfig, CaptureError> {
+        match self {
+            CaptureBackend::Mock(m) => m.update_config(interval_ms, nic_drop_rate, fw_drop_rate),
+        }
+    }
 }
 
 /// /sys/class/net/ からすべてのネットワークインターフェースを列挙

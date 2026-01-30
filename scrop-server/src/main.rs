@@ -75,6 +75,12 @@ async fn main() {
         .route("/interfaces/{name}/attach", post(routes::attach_interface))
         .route("/interfaces/{name}/detach", post(routes::detach_interface));
 
+    #[cfg(not(feature = "ebpf"))]
+    let api_routes = api_routes.route(
+        "/mock/config",
+        get(routes::get_mock_config).put(routes::update_mock_config),
+    );
+
     let app = Router::new()
         .nest("/api", api_routes)
         .route("/ws", get(ws::ws_handler))

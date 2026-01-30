@@ -8,6 +8,9 @@ use serde::Serialize;
 use scrop_capture::{AppState, CaptureError};
 use scrop_capture::types::CaptureStats;
 
+#[cfg(not(feature = "ebpf"))]
+use serde::Deserialize;
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureStatusResponse {
@@ -127,5 +130,52 @@ pub async fn detach_interface(
         .map_err(ApiError::from)?;
     Ok(Json(MessageResponse {
         message: format!("Interface {} detached", name),
+    }))
+}
+
+#[cfg(not(feature = "ebpf"))]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMockConfigRequest {
+    pub interval_ms: Option<u64>,
+    pub nic_drop_rate: Option<f64>,
+    pub fw_drop_rate: Option<f64>,
+}
+
+#[cfg(not(feature = "ebpf"))]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MockConfigResponse {
+    pub interval_ms: u64,
+    pub nic_drop_rate: f64,
+    pub fw_drop_rate: f64,
+}
+
+#[cfg(not(feature = "ebpf"))]
+pub async fn get_mock_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<MockConfigResponse>, ApiError> {
+    let capture = state.capture.lock().await;
+    let config = capture.get_mock_config();
+    Ok(Json(MockConfigResponse {
+        interval_ms: config.interval_ms,
+        nic_drop_rate: config.nic_drop_rate,
+        fw_drop_rate: config.fw_drop_rate,
+    }))
+}
+
+#[cfg(not(feature = "ebpf"))]
+pub async fn update_mock_config(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateMockConfigRequest>,
+) -> Result<Json<MockConfigResponse>, ApiError> {
+    let capture = state.capture.lock().await;
+    let config = capture
+        .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate)
+        .map_err(ApiError::from)?;
+    Ok(Json(MockConfigResponse {
+        interval_ms: config.interval_ms,
+        nic_drop_rate: config.nic_drop_rate,
+        fw_drop_rate: config.fw_drop_rate,
     }))
 }

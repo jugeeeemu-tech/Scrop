@@ -1,9 +1,16 @@
 import { test, expect } from '@playwright/test';
+import { configureFastDrops, configureMock } from './helpers';
 
 test.describe('ドロップパケット表示・エラーハンドリング', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('[data-testid="capture-toggle"]');
+    await configureFastDrops(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    // デフォルト設定に戻す（他テストへの影響を防ぐ）
+    await configureMock(page, { intervalMs: 2000, nicDropRate: 0.10, fwDropRate: 0.15 });
   });
 
   test.describe('ドロップパケット表示', () => {
@@ -13,7 +20,7 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const res = await page.request.get('/api/capture/status');
         const status = await res.json();
         expect(status.stats.fwDropped).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
 
       // drop-pile-firewall が visible（スクロールして確認）
       const pile = page.getByTestId('drop-pile-firewall');
@@ -27,7 +34,7 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const res = await page.request.get('/api/capture/status');
         const status = await res.json();
         expect(status.stats.nicDropped).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
 
       // drop-pile-nic が visible（スクロールして確認）
       const pile = page.getByTestId('drop-pile-nic');
@@ -50,7 +57,7 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         await nicPile.scrollIntoViewIfNeeded();
         const nicCount = await nicBadge.count();
         expect(fwCount + nicCount).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
 
       // 表示されているバッジのテキストが数値 or "99+"
       const fwCount = await fwBadge.count();
@@ -72,7 +79,7 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const fwPile = page.getByTestId('drop-pile-firewall');
         await fwPile.scrollIntoViewIfNeeded();
         await expect(fwBadge).toBeVisible();
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
 
       // drop-pile-firewall にホバー
       const pile = page.getByTestId('drop-pile-firewall');
@@ -88,14 +95,14 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
     });
 
     test('FW層ツールチップがビューポート内に収まる', async ({ page }) => {
-      test.setTimeout(90_000);
+      test.setTimeout(30_000);
       // FWドロップバッジが表示されるまで待つ
       const fwBadge = page.getByTestId('drop-count-firewall');
       await expect(async () => {
         const fwPile = page.getByTestId('drop-pile-firewall');
         await fwPile.scrollIntoViewIfNeeded();
         await expect(fwBadge).toBeVisible();
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
 
       // ホバーしてツールチップを表示
       const pile = page.getByTestId('drop-pile-firewall');
@@ -117,14 +124,14 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
     });
 
     test('NIC層ツールチップがビューポート内に収まる', async ({ page }) => {
-      test.setTimeout(90_000);
+      test.setTimeout(30_000);
       // NICドロップバッジが表示されるまで待つ
       const nicBadge = page.getByTestId('drop-count-nic');
       await expect(async () => {
         const nicPile = page.getByTestId('drop-pile-nic');
         await nicPile.scrollIntoViewIfNeeded();
         await expect(nicBadge).toBeVisible();
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
 
       // ホバーしてツールチップを表示
       const pile = page.getByTestId('drop-pile-nic');
@@ -151,7 +158,10 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const res = await page.request.get('/api/capture/status');
         const status = await res.json();
         expect(status.stats.fwDropped).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
+
+      // キャプチャを停止してUIを安定化
+      await page.request.post('/api/capture/stop');
 
       // FW層のドロップパイルをクリック
       const pile = page.getByTestId('drop-pile-firewall');
@@ -166,7 +176,7 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
       await expect(overlay.getByText('Firewall Drops')).toBeVisible();
 
       // パケット詳細が表示される（プロトコル名が含まれるパケット行）
-      await expect(overlay.getByText(/TCP|UDP/)).toBeVisible();
+      await expect(overlay.getByText(/TCP|UDP/).first()).toBeVisible();
     });
 
     test('モーダルを閉じるボタンで閉じられる', async ({ page }) => {
@@ -175,7 +185,10 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const res = await page.request.get('/api/capture/status');
         const status = await res.json();
         expect(status.stats.fwDropped).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
+
+      // キャプチャを停止してUIを安定化
+      await page.request.post('/api/capture/stop');
 
       // モーダルを開く
       const pile = page.getByTestId('drop-pile-firewall');
@@ -194,7 +207,10 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const res = await page.request.get('/api/capture/status');
         const status = await res.json();
         expect(status.stats.fwDropped).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
+
+      // キャプチャを停止してUIを安定化
+      await page.request.post('/api/capture/stop');
 
       // モーダルを開く
       const pile = page.getByTestId('drop-pile-firewall');
@@ -214,7 +230,10 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         const res = await page.request.get('/api/capture/status');
         const status = await res.json();
         expect(status.stats.fwDropped).toBeGreaterThan(0);
-      }).toPass({ timeout: 60000 });
+      }).toPass({ timeout: 15000 });
+
+      // キャプチャを停止してUIを安定化
+      await page.request.post('/api/capture/stop');
 
       // モーダルを開く
       const pile = page.getByTestId('drop-pile-firewall');

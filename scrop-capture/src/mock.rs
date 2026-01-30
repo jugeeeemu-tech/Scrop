@@ -7,15 +7,32 @@ use tokio::time::{sleep, Duration};
 use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
 use crate::CaptureError;
 
-const PACKET_GENERATION_INTERVAL_MS: u64 = 2000;
-
 pub const AVAILABLE_INTERFACES: &[&str] = &["eth0", "lo", "wlan0", "docker0"];
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MockConfig {
+    pub interval_ms: u64,
+    pub nic_drop_rate: f64,
+    pub fw_drop_rate: f64,
+}
+
+impl Default for MockConfig {
+    fn default() -> Self {
+        Self {
+            interval_ms: 2000,
+            nic_drop_rate: 0.10,
+            fw_drop_rate: 0.15,
+        }
+    }
+}
 
 pub struct MockCapture {
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
     attached_interfaces: Arc<std::sync::Mutex<HashSet<String>>>,
+    config: Arc<std::sync::Mutex<MockConfig>>,
 }
 
 impl MockCapture {
@@ -26,7 +43,52 @@ impl MockCapture {
             packet_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(std::sync::Mutex::new(CaptureStats::default())),
             attached_interfaces: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            config: Arc::new(std::sync::Mutex::new(MockConfig::default())),
         }
+    }
+
+    pub fn get_config(&self) -> MockConfig {
+        self.config.lock().unwrap().clone()
+    }
+
+    pub fn update_config(
+        &self,
+        interval_ms: Option<u64>,
+        nic_drop_rate: Option<f64>,
+        fw_drop_rate: Option<f64>,
+    ) -> Result<MockConfig, CaptureError> {
+        let mut config = self.config.lock().unwrap();
+
+        let new_interval = interval_ms.unwrap_or(config.interval_ms);
+        let new_nic = nic_drop_rate.unwrap_or(config.nic_drop_rate);
+        let new_fw = fw_drop_rate.unwrap_or(config.fw_drop_rate);
+
+        if new_interval == 0 {
+            return Err(CaptureError::InvalidState(
+                "intervalMs must be greater than 0".to_string(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&new_nic) {
+            return Err(CaptureError::InvalidState(
+                "nicDropRate must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&new_fw) {
+            return Err(CaptureError::InvalidState(
+                "fwDropRate must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        if new_nic + new_fw > 1.0 {
+            return Err(CaptureError::InvalidState(
+                "nicDropRate + fwDropRate must be <= 1.0".to_string(),
+            ));
+        }
+
+        config.interval_ms = new_interval;
+        config.nic_drop_rate = new_nic;
+        config.fw_drop_rate = new_fw;
+
+        Ok(config.clone())
     }
 
     pub fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
@@ -72,12 +134,18 @@ impl MockCapture {
         let packet_counter = Arc::clone(&self.packet_counter);
         let stats = Arc::clone(&self.stats);
         let attached_interfaces = Arc::clone(&self.attached_interfaces);
+        let config = Arc::clone(&self.config);
 
         tokio::spawn(async move {
             while is_running.load(Ordering::SeqCst) {
+                let (interval_ms, nic_drop_rate, fw_drop_rate) = {
+                    let cfg = config.lock().unwrap();
+                    (cfg.interval_ms, cfg.nic_drop_rate, cfg.fw_drop_rate)
+                };
+
                 // Skip packet generation if no interfaces are attached
                 if attached_interfaces.lock().unwrap().is_empty() {
-                    sleep(Duration::from_millis(PACKET_GENERATION_INTERVAL_MS)).await;
+                    sleep(Duration::from_millis(interval_ms)).await;
                     continue;
                 }
 
@@ -87,14 +155,11 @@ impl MockCapture {
                 // Determine result immediately
                 let random: f64 = rand::random();
 
-                let (result, packet) = if random < 0.1 {
-                    // 10%: Dropped at NIC
+                let (result, packet) = if random < nic_drop_rate {
                     (PacketResult::NicDrop, packet.with_reason("Buffer overflow"))
-                } else if random < 0.25 {
-                    // 15%: Dropped at FW
+                } else if random < nic_drop_rate + fw_drop_rate {
                     (PacketResult::FwDrop, packet.with_reason("Blocked by rule"))
                 } else {
-                    // 75%: Delivered successfully
                     (PacketResult::Delivered, packet)
                 };
 
@@ -113,7 +178,7 @@ impl MockCapture {
                 let captured = CapturedPacket { packet, result };
                 let _ = tx.send(captured);
 
-                sleep(Duration::from_millis(PACKET_GENERATION_INTERVAL_MS)).await;
+                sleep(Duration::from_millis(interval_ms)).await;
             }
         });
     }
@@ -312,5 +377,83 @@ mod tests {
         for iface in AVAILABLE_INTERFACES {
             assert!(interfaces.contains(&iface.to_string()));
         }
+    }
+
+    #[test]
+    fn config_default_values() {
+        let mock = MockCapture::new();
+        let config = mock.get_config();
+        assert_eq!(config.interval_ms, 2000);
+        assert!((config.nic_drop_rate - 0.10).abs() < f64::EPSILON);
+        assert!((config.fw_drop_rate - 0.15).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn config_partial_update() {
+        let mock = MockCapture::new();
+
+        // Update only interval
+        let config = mock.update_config(Some(100), None, None).unwrap();
+        assert_eq!(config.interval_ms, 100);
+        assert!((config.nic_drop_rate - 0.10).abs() < f64::EPSILON);
+        assert!((config.fw_drop_rate - 0.15).abs() < f64::EPSILON);
+
+        // Update only drop rates
+        let config = mock.update_config(None, Some(0.3), Some(0.2)).unwrap();
+        assert_eq!(config.interval_ms, 100);
+        assert!((config.nic_drop_rate - 0.3).abs() < f64::EPSILON);
+        assert!((config.fw_drop_rate - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn config_validation_interval_zero() {
+        let mock = MockCapture::new();
+        let result = mock.update_config(Some(0), None, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("intervalMs"));
+    }
+
+    #[test]
+    fn config_validation_nic_drop_rate_out_of_range() {
+        let mock = MockCapture::new();
+        let result = mock.update_config(None, Some(1.5), None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("nicDropRate"));
+
+        let result = mock.update_config(None, Some(-0.1), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_validation_fw_drop_rate_out_of_range() {
+        let mock = MockCapture::new();
+        let result = mock.update_config(None, None, Some(1.5));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("fwDropRate"));
+    }
+
+    #[test]
+    fn config_validation_combined_rates_exceed_one() {
+        let mock = MockCapture::new();
+        let result = mock.update_config(None, Some(0.6), Some(0.5));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("<= 1.0"));
+    }
+
+    #[tokio::test]
+    async fn config_affects_generation_interval() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+
+        // Set very fast interval
+        mock.update_config(Some(50), None, None).unwrap();
+
+        let (tx, mut rx) = broadcast::channel(64);
+        mock.start(tx);
+
+        // Should receive packets quickly with 50ms interval
+        let result = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        mock.stop();
+        assert!(result.is_ok(), "Should receive packet within 1s with 50ms interval");
     }
 }
