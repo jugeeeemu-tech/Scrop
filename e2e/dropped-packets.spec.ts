@@ -87,6 +87,64 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
       await expect(tooltip.getByText('Firewall Drops')).toBeVisible();
     });
 
+    test('FW層ツールチップがビューポート内に収まる', async ({ page }) => {
+      test.setTimeout(90_000);
+      // FWドロップバッジが表示されるまで待つ
+      const fwBadge = page.getByTestId('drop-count-firewall');
+      await expect(async () => {
+        const fwPile = page.getByTestId('drop-pile-firewall');
+        await fwPile.scrollIntoViewIfNeeded();
+        await expect(fwBadge).toBeVisible();
+      }).toPass({ timeout: 60000 });
+
+      // ホバーしてツールチップを表示
+      const pile = page.getByTestId('drop-pile-firewall');
+      await pile.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await pile.hover();
+
+      const tooltip = page.getByTestId('drop-tooltip-firewall');
+      await expect(tooltip).toBeVisible({ timeout: 5000 });
+
+      // ツールチップがビューポート内に収まることを検証
+      const box = await tooltip.boundingBox();
+      expect(box).not.toBeNull();
+      const viewport = page.viewportSize()!;
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+      expect(box!.y).toBeGreaterThanOrEqual(64); // ヘッダー 64px より下
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+    });
+
+    test('NIC層ツールチップがビューポート内に収まる', async ({ page }) => {
+      test.setTimeout(90_000);
+      // NICドロップバッジが表示されるまで待つ
+      const nicBadge = page.getByTestId('drop-count-nic');
+      await expect(async () => {
+        const nicPile = page.getByTestId('drop-pile-nic');
+        await nicPile.scrollIntoViewIfNeeded();
+        await expect(nicBadge).toBeVisible();
+      }).toPass({ timeout: 60000 });
+
+      // ホバーしてツールチップを表示
+      const pile = page.getByTestId('drop-pile-nic');
+      await pile.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(500);
+      await pile.hover();
+
+      const tooltip = page.getByTestId('drop-tooltip-nic');
+      await expect(tooltip).toBeVisible({ timeout: 5000 });
+
+      // ツールチップがビューポート内に収まることを検証
+      const box = await tooltip.boundingBox();
+      expect(box).not.toBeNull();
+      const viewport = page.viewportSize()!;
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+      expect(box!.y).toBeGreaterThanOrEqual(64); // ヘッダー 64px より下
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+    });
+
     test('ドロップパイルクリックでモーダルが開く', async ({ page }) => {
       // FWドロップが発生するまで待つ
       await expect(async () => {
