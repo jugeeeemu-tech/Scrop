@@ -120,6 +120,34 @@ test.describe('Scrop E2E', () => {
       await expect(page.getByTestId('packet-modal-overlay')).not.toBeVisible();
     });
 
+    test('モーダル表示中は背面がスクロールできない', async ({ page }) => {
+      // NIC層が見えるようスクロールし、スクロール可能な状態を作る
+      await page.getByTestId('nic-device').scrollIntoViewIfNeeded();
+      const scrolledY = await page.evaluate(() => window.scrollY);
+      expect(scrolledY).toBeGreaterThan(0);
+
+      // モーダルを開く
+      await page.getByTestId('mailbox-etc').click();
+      await expect(page.getByTestId('packet-modal-overlay')).toBeVisible();
+
+      // body に overflow: hidden が設定されている
+      const overflow = await page.evaluate(() => document.body.style.overflow);
+      expect(overflow).toBe('hidden');
+
+      // マウスホイールでスクロールを試みる
+      const beforeY = await page.evaluate(() => window.scrollY);
+      await page.mouse.wheel(0, 500);
+      await page.waitForTimeout(200);
+      const afterY = await page.evaluate(() => window.scrollY);
+      expect(afterY).toBe(beforeY);
+
+      // モーダルを閉じるとスクロール可能に戻る
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('packet-modal-overlay')).not.toBeVisible();
+      const restoredOverflow = await page.evaluate(() => document.body.style.overflow);
+      expect(restoredOverflow).toBe('');
+    });
+
     test('モーダルにパケット情報が表示される', async ({ page }) => {
       // パケットが蓄積されるのを少し待つ
       await page.waitForTimeout(1000);
