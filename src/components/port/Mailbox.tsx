@@ -1,7 +1,8 @@
 import { cn } from '../../lib/utils';
 import { Package, X, GripVertical } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { EditableLabel } from './EditableLabel';
 import type { AnimatingPacket, PortInfo } from '../../types';
 
@@ -20,6 +21,67 @@ interface MailboxProps {
   onCommitEdit?: () => void;
   onCancelEdit?: () => void;
   isDraggable?: boolean;
+}
+
+function MailboxModalList({ packets }: { packets: AnimatingPacket[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const reversed = packets.slice().reverse();
+
+  const virtualizer = useVirtualizer({
+    count: reversed.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 56,
+    overscan: 5,
+  });
+
+  if (packets.length === 0) {
+    return (
+      <div className="p-4">
+        <div className="text-center py-8 text-muted-foreground">
+          <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
+          <p className="text-sm">No packets yet</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={scrollRef} className="p-4 overflow-y-auto max-h-[50vh]">
+      <div
+        style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const packet = reversed[virtualItem.index];
+          return (
+            <div
+              key={packet.id}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: `${virtualItem.size}px`,
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-2">
+                <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{packet.protocol}</span>
+                    <span className="text-xs text-muted-foreground">{packet.size}B</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export function Mailbox({
@@ -188,34 +250,7 @@ export function Mailbox({
               </button>
             </div>
 
-            <div className="p-4 overflow-y-auto max-h-[50vh]">
-              {packets.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">No packets yet</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {packets
-                    .slice()
-                    .reverse()
-                    .map((packet) => (
-                      <div key={packet.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                        <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-foreground">{packet.protocol}</span>
-                            <span className="text-xs text-muted-foreground">{packet.size}B</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              )}
-            </div>
+            <MailboxModalList packets={packets} />
           </div>
         </div>,
         document.body

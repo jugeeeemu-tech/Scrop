@@ -2,6 +2,7 @@ import { cn } from '../../lib/utils';
 import { Shield, Cpu, Package, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 import { DropStream } from '../packet/DropStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
@@ -24,6 +25,69 @@ function estimateTooltipHeight(count: number): number {
   const moreText = count > TOOLTIP_MAX_ITEMS ? 20 : 0; // "+N more..." + pt-1
   const footer = 23;           // "click to see all" px-3 pb-2
   return border + header + containerPad + items + itemGaps + moreText + footer;
+}
+
+function DroppedModalList({ packets }: { packets: AnimatingPacket[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: packets.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 72,
+    overscan: 5,
+  });
+
+  if (packets.length === 0) {
+    return (
+      <div className="p-4">
+        <div className="text-center py-8 text-muted-foreground">
+          <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
+          <p className="text-sm">No dropped packets</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={scrollRef} className="p-4 overflow-y-auto max-h-[50vh]">
+      <div
+        style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const packet = packets[virtualItem.index];
+          return (
+            <div
+              key={packet.id}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: `${virtualItem.size}px`,
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-2">
+                <Package className="w-4 h-4 text-destructive flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{packet.protocol}</span>
+                    <span className="text-xs text-muted-foreground">{packet.size}B</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
+                  </p>
+                  {packet.reason && (
+                    <p className="text-xs text-destructive mt-1 truncate">{packet.reason}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 interface DroppedPileProps {
@@ -205,34 +269,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
               </button>
             </div>
 
-            <div className="p-4 overflow-y-auto max-h-[50vh]">
-              {packets.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">No dropped packets</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {reversedPackets.map((packet) => (
-                    <div key={packet.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                      <Package className="w-4 h-4 text-destructive flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">{packet.protocol}</span>
-                          <span className="text-xs text-muted-foreground">{packet.size}B</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
-                        </p>
-                        {packet.reason && (
-                          <p className="text-xs text-destructive mt-1 truncate">{packet.reason}</p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <DroppedModalList packets={reversedPackets} />
           </div>
         </div>,
         document.body

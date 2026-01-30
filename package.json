@@ -19,6 +19,7 @@
     "perf": "npm run perf:lighthouse && npm run perf:cdp"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.18",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "clsx": "^2.1.1",
