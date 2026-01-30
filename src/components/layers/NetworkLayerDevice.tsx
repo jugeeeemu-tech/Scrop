@@ -19,7 +19,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
   const [isHovered, setIsHovered] = useState(false);
 
   return (
-    <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+    <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} data-testid={`drop-pile-${type}`}>
       {/* Drop animations - positioned at the center of the pile */}
       <div className="absolute bottom-4 left-4 z-20">
         <StreamFadeOut active={isDropStreamMode}>
@@ -57,7 +57,10 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
 
         {/* Count badge - only when count > 0 */}
         {count > 0 && (
-          <div className="absolute -top-2 -right-2 min-w-6 h-6 px-2 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-medium z-10">
+          <div
+            className="absolute -top-2 -right-2 min-w-6 h-6 px-2 bg-destructive text-white rounded-full flex items-center justify-center text-xs font-medium z-10"
+            data-testid={`drop-count-${type}`}
+          >
             {count > 99 ? '99+' : count}
           </div>
         )}
@@ -65,7 +68,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
 
       {/* Hover tooltip with packet details - only when count > 0 */}
       {isHovered && count > 0 && (
-        <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden" data-testid={`drop-tooltip-${type}`}>
           <div className="p-3 border-b border-border bg-destructive/5">
             <p className="text-sm font-medium text-foreground">{type === 'firewall' ? 'Firewall' : 'NIC'} Drops</p>
             <p className="text-xs text-muted-foreground">{count} packet{count !== 1 ? 's' : ''} blocked</p>

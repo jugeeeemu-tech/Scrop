@@ -94,7 +94,10 @@ export function Mailbox({
 
             {/* Packet counter badge */}
             {packetCount > 0 && (
-              <div className="absolute -top-2 -right-2 min-w-5 h-5 px-1.5 bg-foreground text-background rounded-full flex items-center justify-center text-xs font-medium">
+              <div
+                className="absolute -top-2 -right-2 min-w-5 h-5 px-1.5 bg-foreground text-background rounded-full flex items-center justify-center text-xs font-medium"
+                data-testid={`mailbox-badge-${isEtc ? 'etc' : portInfo.port}`}
+              >
                 {packetCount > 99 ? '99+' : packetCount}
               </div>
             )}
@@ -131,6 +134,7 @@ export function Mailbox({
               placeholder="Port"
               className="text-xs font-medium text-foreground"
               type="number"
+              testId={`port-number-${portInfo.port}`}
             />
             <EditableLabel
               value={portInfo.label}
@@ -141,6 +145,7 @@ export function Mailbox({
               onCancel={() => onCancelEdit?.()}
               placeholder="Label"
               className="text-[10px] text-muted-foreground"
+              testId={`port-label-${portInfo.port}`}
             />
           </>
         )}

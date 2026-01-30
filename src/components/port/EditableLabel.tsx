@@ -11,6 +11,7 @@ interface EditableLabelProps {
   placeholder?: string;
   className?: string;
   type?: 'text' | 'number';
+  testId?: string;
 }
 
 const sharedClassName =
@@ -26,6 +27,7 @@ export function EditableLabel({
   placeholder,
   className,
   type = 'text',
+  testId,
 }: EditableLabelProps) {
   const callbackRef = useCallback((node: HTMLInputElement | null) => {
     if (node) {
@@ -42,6 +44,7 @@ export function EditableLabel({
           e.stopPropagation();
           onClick();
         }}
+        data-testid={testId}
       >
         {value || placeholder || ''}
       </p>
@@ -55,6 +58,7 @@ export function EditableLabel({
       size={1}
       value={value}
       placeholder={placeholder}
+      data-testid={testId ? `${testId}-input` : undefined}
       className={cn(
         sharedClassName,
         'bg-transparent border-foreground/50 outline-none min-w-0 h-auto font-[inherit] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
