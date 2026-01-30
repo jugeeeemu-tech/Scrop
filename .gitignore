@@ -24,5 +24,8 @@ dist-ssr
 *.sw?
 .claude
 
+# Performance reports
+perf-report/
+
 # Rust build artifacts
 target

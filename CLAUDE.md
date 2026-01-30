@@ -119,6 +119,11 @@ cargo llvm-cov test --no-default-features -p scrop-capture -p scrop-server
 npm run test:e2e                              # E2Eテスト実行
 npm run test:e2e:ui                           # UIモードで実行
 E2E_PORT=3001 npm run test:e2e                # 別ポートで実行（eBPFサーバが:3000を占有時）
+
+# パフォーマンス計測 ※ mockサーバを自動起動
+npm run perf:lighthouse                       # Lighthouse Web Vitals → perf-report/lighthouse.json
+npm run perf:cdp                              # CDP FPS/メモリ/Long Tasks → perf-report/cdp-metrics.json
+npm run perf                                  # 両方実行
 ```
 
 ## REST API (scrop-server)
