@@ -136,8 +136,23 @@ function createInitialStore(ports: PortInfo[]): PacketStoreState {
   };
 }
 
+// Batching: suppress emitChange during batch, flush once at endBatch
+let batchDepth = 0;
+
 function emitChange() {
+  if (batchDepth > 0) return;
   listeners.forEach((listener) => listener());
+}
+
+function beginBatch() {
+  batchDepth++;
+}
+
+function endBatch() {
+  batchDepth--;
+  if (batchDepth === 0) {
+    listeners.forEach((listener) => listener());
+  }
 }
 
 function formatError(err: unknown, userMessage: string): string {
@@ -201,11 +216,14 @@ function scheduleRateWindowUpdate() {
     const nextNicDrop = store.isNicDropStreamMode && getRate(recentNicDropTimes) >= STREAM_MODE_RATE_EXIT_THRESHOLD;
     const nextFwDrop = store.isFwDropStreamMode && getRate(recentFwDropTimes) >= STREAM_MODE_RATE_EXIT_THRESHOLD;
 
-    // Per-port exit check
-    const nextStreamingPorts = store.streamingPorts.filter((port) => {
+    // Per-port exit check (参照安定性: 内容が同じなら既存配列を再利用)
+    const filteredPorts = store.streamingPorts.filter((port) => {
       const portRate = recentDeliveredTimesPerPort[port] ? getRate(recentDeliveredTimesPerPort[port]) : 0;
       return portRate >= STREAM_MODE_RATE_EXIT_THRESHOLD;
     });
+    const nextStreamingPorts = filteredPorts.length === store.streamingPorts.length
+      ? store.streamingPorts
+      : filteredPorts;
 
     store = {
       ...store,
@@ -325,7 +343,12 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
   const port = packet.targetPort ?? 0;
   pushDeliveredTime(port, now);
   const activePorts = getActiveStreamPorts();
-  const updatedStreamingPorts = [...new Set([...store.streamingPorts, ...activePorts])];
+  const mergedSet = new Set([...store.streamingPorts, ...activePorts]);
+  // 参照安定性: 内容が変わらなければ既存配列を再利用
+  const updatedStreamingPorts = mergedSet.size === store.streamingPorts.length &&
+    store.streamingPorts.every((p) => mergedSet.has(p))
+    ? store.streamingPorts
+    : [...mergedSet];
   const isPortStreaming = updatedStreamingPorts.includes(port);
 
   if (isPortStreaming) {
@@ -379,12 +402,15 @@ function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
 
   if (isStreamMode) {
     // ストリーム中: incomingアニメーションをスキップ、直接NIC処理へ
+    // バッチ化: processPacket → processNIC → processFW の複数 emitChange を1回に集約
+    beginBatch();
     store = {
       ...store,
       isIncomingStreamMode: true,
     };
     emitChange();
     processNIC(packet, result, generation);
+    endBatch();
   } else {
     // 通常: incomingPacketsに追加、遅延後にNIC処理
     store = {
@@ -572,6 +598,37 @@ export function clearAll(): void {
   store = createInitialStore(getPorts());
   emitChange();
 }
+
+// Per-field selectors for fine-grained subscriptions
+// Header
+export const selectDeliveredCounter = () => store.deliveredCounter;
+export const selectDroppedCounter = () => store.droppedCounter;
+export const selectError = () => store.error;
+export const selectIsCapturing = () => store.isCapturing;
+
+// PortLayer
+export const selectDeliveredPackets = () => store.deliveredPackets;
+export const selectDeliveredCounterPerPort = () => store.deliveredCounterPerPort;
+export const selectFwToPortPackets = () => store.fwToPortPackets;
+export const selectStreamingPorts = () => store.streamingPorts;
+
+// FWLayer
+export const selectFirewallDropped = () => store.firewallDropped;
+export const selectFwDroppedCounter = () => store.fwDroppedCounter;
+export const selectFwActive = () => store.fwActive;
+export const selectFwDropAnimations = () => store.fwDropAnimations;
+export const selectNicToFwPackets = () => store.nicToFwPackets;
+export const selectIsFwDropStreamMode = () => store.isFwDropStreamMode;
+export const selectIsNicToFwStreamMode = () => store.isNicToFwStreamMode;
+
+// NICLayer
+export const selectNicDropped = () => store.nicDropped;
+export const selectNicDroppedCounter = () => store.nicDroppedCounter;
+export const selectNicDropAnimations = () => store.nicDropAnimations;
+export const selectIncomingPackets = () => store.incomingPackets;
+export const selectIsNicDropStreamMode = () => store.isNicDropStreamMode;
+export const selectIsIncomingStreamMode = () => store.isIncomingStreamMode;
+export const selectNicActive = () => store.nicActive;
 
 // Module-level subscription: sync packetStore when portStore changes
 let _prevPortsRef: PortInfo[] | null = null;
