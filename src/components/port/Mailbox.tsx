@@ -44,8 +44,13 @@ export function Mailbox({
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setIsOpen(false);
+      };
+      document.addEventListener('keydown', handleKeyDown);
       return () => {
         document.body.style.overflow = '';
+        document.removeEventListener('keydown', handleKeyDown);
       };
     }
   }, [isOpen]);
@@ -64,6 +69,7 @@ export function Mailbox({
         type="button"
         onClick={() => setIsOpen(true)}
         className="relative flex flex-col items-center"
+        data-testid={`mailbox-${isEtc ? 'etc' : portInfo.port}`}
       >
         <div className="relative">
           {/* Flag indicator */}
@@ -145,7 +151,7 @@ export function Mailbox({
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm"
           onClick={() => setIsOpen(false)}
-          onKeyDown={(e) => e.key === 'Escape' && setIsOpen(false)}
+          data-testid="packet-modal-overlay"
         >
           <div
             className="bg-card border border-border rounded-2xl shadow-2xl max-w-md w-full mx-4 max-h-[70vh] overflow-hidden"
@@ -169,6 +175,7 @@ export function Mailbox({
                 type="button"
                 onClick={() => setIsOpen(false)}
                 className="p-1 rounded-full hover:bg-muted transition-colors"
+                data-testid="packet-modal-close"
               >
                 <X className="w-5 h-5 text-muted-foreground" />
               </button>

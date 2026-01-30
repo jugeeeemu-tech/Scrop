@@ -11,6 +11,7 @@ export function AddMailbox({ onClick }: AddMailboxProps) {
         type="button"
         onClick={onClick}
         className="relative flex flex-col items-center cursor-pointer group"
+        data-testid="add-port"
       >
         <div className="relative">
           {/* Mailbox body - dashed border */}

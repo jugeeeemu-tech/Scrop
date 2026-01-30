@@ -60,6 +60,7 @@ export function NicDevice({
                         ? 'border-2 border-success bg-success/10 text-foreground'
                         : 'border-2 border-dashed border-muted-foreground/30 text-muted-foreground hover:border-muted-foreground/50'
                     )}
+                    data-testid={`nic-${name}`}
                   >
                     {name}
                   </motion.button>
@@ -75,6 +76,7 @@ export function NicDevice({
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
         className="relative flex flex-col items-center cursor-pointer"
+        data-testid="nic-device"
       >
         <div className="relative">
           {/* Flag indicator */}

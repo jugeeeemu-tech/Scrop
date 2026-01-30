@@ -26,13 +26,13 @@ export function Header({ isCapturing, deliveredCount, droppedCount, onToggleCapt
               <span
                 className={cn('w-2 h-2 rounded-full', isCapturing ? 'bg-success animate-pulse' : 'bg-muted-foreground')}
               />
-              <span className="text-sm font-medium text-foreground">{deliveredCount}</span>
+              <span className="text-sm font-medium text-foreground" data-testid="delivered-count">{deliveredCount}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span
                 className={cn('w-2 h-2 rounded-full', isCapturing ? 'bg-destructive animate-pulse' : 'bg-muted-foreground')}
               />
-              <span className="text-sm font-medium text-foreground">{droppedCount}</span>
+              <span className="text-sm font-medium text-foreground" data-testid="dropped-count">{droppedCount}</span>
             </div>
           </div>
 
@@ -40,6 +40,7 @@ export function Header({ isCapturing, deliveredCount, droppedCount, onToggleCapt
             type="button"
             onClick={onToggleCapture}
             className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
+            data-testid="capture-toggle"
           >
             {isCapturing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
           </button>
@@ -48,6 +49,7 @@ export function Header({ isCapturing, deliveredCount, droppedCount, onToggleCapt
             type="button"
             onClick={onReset}
             className="h-8 w-8 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
+            data-testid="capture-reset"
           >
             <RotateCcw className="w-4 h-4" />
           </button>
@@ -55,7 +57,7 @@ export function Header({ isCapturing, deliveredCount, droppedCount, onToggleCapt
       </div>
 
       {error && (
-        <div className="bg-destructive text-destructive-foreground px-6 py-2">
+        <div className="bg-destructive text-destructive-foreground px-6 py-2" data-testid="error-banner">
           <div className="max-w-6xl mx-auto flex items-center gap-2">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span className="text-sm">{error}</span>
