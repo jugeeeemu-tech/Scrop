@@ -140,6 +140,7 @@ pub struct UpdateMockConfigRequest {
     pub interval_ms: Option<u64>,
     pub nic_drop_rate: Option<f64>,
     pub fw_drop_rate: Option<f64>,
+    pub batch_size: Option<u32>,
 }
 
 #[cfg(not(feature = "ebpf"))]
@@ -149,6 +150,7 @@ pub struct MockConfigResponse {
     pub interval_ms: u64,
     pub nic_drop_rate: f64,
     pub fw_drop_rate: f64,
+    pub batch_size: u32,
 }
 
 #[cfg(not(feature = "ebpf"))]
@@ -161,6 +163,7 @@ pub async fn get_mock_config(
         interval_ms: config.interval_ms,
         nic_drop_rate: config.nic_drop_rate,
         fw_drop_rate: config.fw_drop_rate,
+        batch_size: config.batch_size,
     }))
 }
 
@@ -171,11 +174,12 @@ pub async fn update_mock_config(
 ) -> Result<Json<MockConfigResponse>, ApiError> {
     let capture = state.capture.lock().await;
     let config = capture
-        .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate)
+        .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate, req.batch_size)
         .map_err(ApiError::from)?;
     Ok(Json(MockConfigResponse {
         interval_ms: config.interval_ms,
         nic_drop_rate: config.nic_drop_rate,
         fw_drop_rate: config.fw_drop_rate,
+        batch_size: config.batch_size,
     }))
 }

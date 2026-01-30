@@ -4,6 +4,7 @@ interface MockConfig {
   intervalMs?: number;
   nicDropRate?: number;
   fwDropRate?: number;
+  batchSize?: number;
 }
 
 /**

@@ -191,6 +191,7 @@ mod scrop_server_routes {
         pub interval_ms: Option<u64>,
         pub nic_drop_rate: Option<f64>,
         pub fw_drop_rate: Option<f64>,
+        pub batch_size: Option<u32>,
     }
 
     #[derive(Serialize)]
@@ -199,6 +200,7 @@ mod scrop_server_routes {
         pub interval_ms: u64,
         pub nic_drop_rate: f64,
         pub fw_drop_rate: f64,
+        pub batch_size: u32,
     }
 
     pub async fn get_mock_config(
@@ -210,6 +212,7 @@ mod scrop_server_routes {
             interval_ms: config.interval_ms,
             nic_drop_rate: config.nic_drop_rate,
             fw_drop_rate: config.fw_drop_rate,
+            batch_size: config.batch_size,
         }))
     }
 
@@ -219,12 +222,13 @@ mod scrop_server_routes {
     ) -> Result<Json<MockConfigResponse>, ApiError> {
         let capture = state.capture.lock().await;
         let config = capture
-            .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate)
+            .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate, req.batch_size)
             .map_err(ApiError::from)?;
         Ok(Json(MockConfigResponse {
             interval_ms: config.interval_ms,
             nic_drop_rate: config.nic_drop_rate,
             fw_drop_rate: config.fw_drop_rate,
+            batch_size: config.batch_size,
         }))
     }
 }
@@ -659,6 +663,7 @@ async fn get_mock_config_returns_defaults() {
     assert_eq!(json["intervalMs"], 2000);
     assert_eq!(json["nicDropRate"], 0.1);
     assert_eq!(json["fwDropRate"], 0.15);
+    assert_eq!(json["batchSize"], 1);
 }
 
 #[tokio::test]
@@ -731,5 +736,30 @@ async fn put_mock_config_validation_combined_rates_exceed_one() {
         r#"{"nicDropRate": 0.6, "fwDropRate": 0.5}"#,
     )
     .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn put_mock_config_batch_size_update() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = put_json_request(&app, "/api/mock/config", r#"{"batchSize": 5}"#).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["batchSize"], 5);
+    // Other fields unchanged
+    assert_eq!(json["intervalMs"], 2000);
+    assert_eq!(json["nicDropRate"], 0.1);
+    assert_eq!(json["fwDropRate"], 0.15);
+}
+
+#[tokio::test]
+async fn put_mock_config_validation_batch_size_zero() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response =
+        put_json_request(&app, "/api/mock/config", r#"{"batchSize": 0}"#).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
