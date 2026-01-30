@@ -121,15 +121,15 @@ export function Mailbox({
               value={portInfo.port === 0 ? '' : String(portInfo.port)}
               isEditing={isEditing && editingField === 'port'}
               onClick={() => onStartEdit?.('port')}
-              onChange={(val) => {
+              onCommit={(val) => {
                 const num = parseInt(val, 10);
                 if (!isNaN(num) && num >= 0 && num <= 65535) {
                   onPortChange?.(num);
                 } else if (val === '') {
                   onPortChange?.(0);
                 }
+                onCommitEdit?.();
               }}
-              onCommit={() => onCommitEdit?.()}
               onCancel={() => onCancelEdit?.()}
               placeholder="Port"
               className="text-xs font-medium text-foreground"
@@ -140,8 +140,10 @@ export function Mailbox({
               value={portInfo.label}
               isEditing={isEditing && editingField === 'label'}
               onClick={() => onStartEdit?.('label')}
-              onChange={(val) => onLabelChange?.(val)}
-              onCommit={() => onCommitEdit?.()}
+              onCommit={(val) => {
+                onLabelChange?.(val);
+                onCommitEdit?.();
+              }}
               onCancel={() => onCancelEdit?.()}
               placeholder="Label"
               className="text-[10px] text-muted-foreground"

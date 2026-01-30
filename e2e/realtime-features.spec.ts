@@ -66,13 +66,12 @@ test.describe('localStorage永続化', () => {
   });
 
   test('ポート番号編集がlocalStorageに永続化される', async ({ page }) => {
-    // 80→22 に編集
+    // 80→22 に編集（コミットまでストアは更新されない）
     await page.getByTestId('port-number-80').click();
     const input = page.getByTestId('port-number-80-input');
     await expect(input).toBeVisible();
     await input.fill('22');
-    // fill で onChange が発火し testId が port-number-22-input に変わる
-    await page.getByTestId('port-number-22-input').press('Enter');
+    await input.press('Enter');
 
     // 変更を確認
     await expect(page.getByTestId('mailbox-22')).toBeVisible();

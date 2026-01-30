@@ -1,12 +1,11 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { cn } from '../../lib/utils';
 
 interface EditableLabelProps {
   value: string;
   isEditing: boolean;
   onClick: () => void;
-  onChange: (value: string) => void;
-  onCommit: () => void;
+  onCommit: (value: string) => void;
   onCancel: () => void;
   placeholder?: string;
   className?: string;
@@ -21,7 +20,6 @@ export function EditableLabel({
   value,
   isEditing,
   onClick,
-  onChange,
   onCommit,
   onCancel,
   placeholder,
@@ -29,6 +27,16 @@ export function EditableLabel({
   type = 'text',
   testId,
 }: EditableLabelProps) {
+  const [localValue, setLocalValue] = useState(value);
+
+  // 編集開始時にローカルステートを親の値で初期化
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 編集開始時のみ同期
+  useEffect(() => {
+    if (isEditing) {
+      setLocalValue(value);
+    }
+  }, [isEditing]);
+
   const callbackRef = useCallback((node: HTMLInputElement | null) => {
     if (node) {
       node.focus();
@@ -56,7 +64,7 @@ export function EditableLabel({
       ref={callbackRef}
       type={type}
       size={1}
-      value={value}
+      value={localValue}
       placeholder={placeholder}
       data-testid={testId ? `${testId}-input` : undefined}
       className={cn(
@@ -64,17 +72,17 @@ export function EditableLabel({
         'bg-transparent border-foreground/50 outline-none min-w-0 h-auto font-[inherit] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
         className
       )}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => setLocalValue(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          onCommit();
+          onCommit(localValue);
         } else if (e.key === 'Escape') {
           e.preventDefault();
           onCancel();
         }
       }}
-      onBlur={onCommit}
+      onBlur={() => onCommit(localValue)}
       onClick={(e) => e.stopPropagation()}
     />
   );

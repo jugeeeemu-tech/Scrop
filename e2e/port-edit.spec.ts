@@ -44,9 +44,9 @@ test.describe('ポートインライン編集', () => {
     const input = page.getByTestId('port-number-80-input');
     await expect(input).toBeVisible();
 
-    // 80→8080 に変更（fill で onChange が発火し testId が変わる）
+    // 80→8080 に変更（コミットまでストアは更新されない）
     await input.fill('8080');
-    await page.getByTestId('port-number-8080-input').press('Enter');
+    await input.press('Enter');
 
     // mailbox-8080 が表示され、ラベルが自動で "Proxy" になる
     await expect(page.getByTestId('mailbox-8080')).toBeVisible();
@@ -102,9 +102,9 @@ test.describe('ポートインライン編集', () => {
     const input = page.getByTestId('port-number-80-input');
     await expect(input).toBeVisible();
 
-    // fill で onChange が発火し testId が port-number-22-input に変わる
+    // コミットまでストアは更新されない
     await input.fill('22');
-    await page.getByTestId('port-number-22-input').press('Enter');
+    await input.press('Enter');
 
     // ラベルが "SSH" に自動変更
     await expect(page.getByTestId('port-label-22')).toHaveText('SSH');
