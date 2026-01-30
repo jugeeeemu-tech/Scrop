@@ -1,11 +1,30 @@
 import { cn } from '../../lib/utils';
 import { Shield, Cpu, Package, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 import { DropStream } from '../packet/DropStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
 import type { AnimatingPacket } from '../../types';
+
+const TOOLTIP_WIDTH = 288;    // w-72 = 18rem
+const TOOLTIP_GAP = 16;       // ml-4 = 1rem
+const HEADER_HEIGHT = 64;     // --header-height: 4rem
+const VIEWPORT_PADDING = 8;   // 端からの余白
+const TOOLTIP_MAX_ITEMS = 3;
+
+/** ツールチップの高さをコンテンツから事前計算 */
+function estimateTooltipHeight(count: number): number {
+  const border = 2;            // border 1px x 2
+  const header = 61;           // p-3 + text 2行 + border-b
+  const containerPad = 16;     // p-2 上下 = 8px x 2
+  const itemCount = Math.min(count, TOOLTIP_MAX_ITEMS);
+  const items = itemCount * 68; // p-2 + text 3行 = 68px per item
+  const itemGaps = Math.max(0, itemCount - 1) * 4; // space-y-1
+  const moreText = count > TOOLTIP_MAX_ITEMS ? 20 : 0; // "+N more..." + pt-1
+  const footer = 23;           // "click to see all" px-3 pb-2
+  return border + header + containerPad + items + itemGaps + moreText + footer;
+}
 
 interface DroppedPileProps {
   packets: AnimatingPacket[];
@@ -19,12 +38,46 @@ interface DroppedPileProps {
 export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
 
-  const tooltipMaxItems = 3;
   const reversedPackets = packets.slice().reverse();
-  const tooltipPackets = reversedPackets.slice(0, tooltipMaxItems);
-  const remainingCount = count - tooltipMaxItems;
+  const tooltipPackets = reversedPackets.slice(0, TOOLTIP_MAX_ITEMS);
+  const remainingCount = count - TOOLTIP_MAX_ITEMS;
   const dropLabel = type === 'firewall' ? 'Firewall' : 'NIC';
+
+  const handleMouseEnter = () => {
+    setIsHovered(true);
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    const style: React.CSSProperties = {};
+
+    // 水平方向: デフォルトは右側
+    const rightEdge = rect.right + TOOLTIP_GAP + TOOLTIP_WIDTH;
+    if (rightEdge <= vw - VIEWPORT_PADDING) {
+      style.left = rect.width + TOOLTIP_GAP;
+    } else if (rect.left - TOOLTIP_GAP - TOOLTIP_WIDTH >= VIEWPORT_PADDING) {
+      style.right = rect.width + TOOLTIP_GAP;
+    } else {
+      style.left = vw - VIEWPORT_PADDING - TOOLTIP_WIDTH - rect.left;
+    }
+
+    // 垂直方向: コンテンツから高さを事前計算して配置
+    const tooltipHeight = estimateTooltipHeight(count);
+    const minTop = HEADER_HEIGHT + VIEWPORT_PADDING - rect.top;
+    // フッターが見えている場合はフッター上端を下限にする
+    const footerEl = document.querySelector('footer');
+    const bottomLimit = footerEl
+      ? Math.min(vh, footerEl.getBoundingClientRect().top)
+      : vh;
+    const maxTop = bottomLimit - VIEWPORT_PADDING - tooltipHeight - rect.top;
+    style.top = Math.max(minTop, Math.min(0, maxTop));
+
+    setTooltipStyle(style);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -41,7 +94,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
   }, [isOpen]);
 
   return (
-    <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} data-testid={`drop-pile-${type}`}>
+    <div ref={containerRef} className="relative" onMouseEnter={handleMouseEnter} onMouseLeave={() => setIsHovered(false)} data-testid={`drop-pile-${type}`}>
       {/* Drop animations - positioned at the center of the pile */}
       <div className="absolute bottom-4 left-4 z-20">
         <StreamFadeOut active={isDropStreamMode}>
@@ -94,7 +147,11 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
 
       {/* Hover tooltip with packet details - only when count > 0 */}
       {isHovered && count > 0 && (
-        <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden" data-testid={`drop-tooltip-${type}`}>
+        <div
+          className="absolute z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden"
+          style={tooltipStyle}
+          data-testid={`drop-tooltip-${type}`}
+        >
           <div className="p-3 border-b border-border bg-destructive/5">
             <p className="text-sm font-medium text-foreground">{dropLabel} Drops</p>
             <p className="text-xs text-muted-foreground">{count} packet{count !== 1 ? 's' : ''} blocked</p>
