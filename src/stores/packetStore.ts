@@ -609,8 +609,17 @@ export const selectIsCapturing = () => store.isCapturing;
 // PortLayer
 export const selectDeliveredPackets = () => store.deliveredPackets;
 export const selectDeliveredCounterPerPort = () => store.deliveredCounterPerPort;
+export const selectDeliveredPacketsForPort = (portKey: number) =>
+  store.deliveredPackets[portKey];
 export const selectFwToPortPackets = () => store.fwToPortPackets;
 export const selectStreamingPorts = () => store.streamingPorts;
+
+// Per-port selectors (primitive return → Object.is skips re-render when unchanged)
+export const selectDeliveredCountForPort = (portKey: number) =>
+  store.deliveredCounterPerPort[portKey] ?? 0;
+export const selectIsPortActive = (portKey: number) =>
+  store.fwToPortPackets.some((p) => p.targetPort === portKey) ||
+  store.streamingPorts.includes(portKey);
 
 // FWLayer
 export const selectFirewallDropped = () => store.firewallDropped;

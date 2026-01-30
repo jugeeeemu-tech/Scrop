@@ -1,7 +1,7 @@
 import { Mailbox } from './Mailbox';
 import { Reorder, useMotionValue, useTransform } from 'framer-motion';
 import { useCallback, useRef, useState } from 'react';
-import type { AnimatingPacket, PortInfo } from '../../types';
+import type { PortInfo } from '../../types';
 
 const DELETE_Y_THRESHOLD = 100;
 
@@ -10,9 +10,6 @@ interface DraggableMailboxProps {
   editingKey: string | number;
   onRemove: () => void;
   mailboxRef: (el: HTMLDivElement | null) => void;
-  packets: AnimatingPacket[];
-  packetCount: number;
-  isActive: boolean;
   isEditing: boolean;
   editingField: 'port' | 'label' | null;
   onPortChange: (port: number) => void;

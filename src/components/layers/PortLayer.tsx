@@ -1,17 +1,12 @@
 import { Mailbox } from '../port/Mailbox';
 import { AddMailbox } from '../port/AddMailbox';
 import { DraggableMailbox } from '../port/DraggableMailbox';
-import { AnimatedPacket } from '../packet/AnimatedPacket';
-import { PacketStream } from '../packet/PacketStream';
-import { StreamFadeOut } from '../packet/StreamFadeOut';
+import { PortAnimationZone } from './PortAnimationZone';
 import { ScrollHint } from '../common/ScrollHint';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { Reorder } from 'framer-motion';
 import type { PortInfo } from '../../types';
-import { ETC_PORT_KEY, getPortKey } from '../../constants';
 import { usePortPositionStore } from '../../hooks';
-import { usePortLayerStore } from '../../hooks/usePortLayerStore';
-import { handleFwToPortComplete } from '../../stores/packetStore';
 
 interface PortLayerProps {
   ports: PortInfo[];
@@ -40,33 +35,8 @@ export function PortLayer({
   onRemovePort,
   onReorderPorts,
 }: PortLayerProps) {
-  const { deliveredPackets, deliveredCounterPerPort, fwToPortPackets: animatingPackets, streamingPorts } = usePortLayerStore();
   const animationZoneRef = useRef<HTMLDivElement>(null);
   const { mailboxPositions, setMailboxRef } = usePortPositionStore(animationZoneRef, ports.length);
-
-  // Helper: ポートキーから配列インデックスへの逆変換
-  const portKeyToIndex = (portKey: number): number => {
-    if (portKey === ETC_PORT_KEY) {
-      return ports.findIndex((p) => p.type === 'etc');
-    }
-    return ports.findIndex((p) => p.type === 'port' && p.port === portKey);
-  };
-
-  // Track ports that need visible stream (active or fading out)
-  const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>([]);
-  const [prevStreamingPorts, setPrevStreamingPorts] = useState(streamingPorts);
-
-  if (streamingPorts !== prevStreamingPorts) {
-    setPrevStreamingPorts(streamingPorts);
-    const combined = [...new Set([...visibleStreamPorts, ...streamingPorts])];
-    if (combined.length !== visibleStreamPorts.length || !combined.every((p, i) => p === visibleStreamPorts[i])) {
-      setVisibleStreamPorts(combined);
-    }
-  }
-
-  const handleFadeComplete = (port: number) => {
-    setVisibleStreamPorts((prev) => prev.filter((p) => p !== port));
-  };
 
   // Separate draggable ports from etc
   const draggablePorts = ports.filter((p) => p.type !== 'etc');
@@ -98,12 +68,6 @@ export function PortLayer({
                   portInfo={portInfo}
                   mailboxRef={(el) => setMailboxRef(index, el)}
                   onRemove={() => onRemovePort(index)}
-                  packets={deliveredPackets[getPortKey(portInfo)] || []}
-                  packetCount={deliveredCounterPerPort[getPortKey(portInfo)] || 0}
-                  isActive={
-                    animatingPackets.some((p) => p.targetPort === getPortKey(portInfo)) ||
-                    streamingPorts.includes(getPortKey(portInfo))
-                  }
                   isEditing={editingIndex === index}
                   editingField={editingIndex === index ? editingField : null}
                   onPortChange={(port) => onPortChange(index, port)}
@@ -120,12 +84,6 @@ export function PortLayer({
             <Mailbox
               ref={(el) => setMailboxRef(etcIndex, el)}
               portInfo={etcPort}
-              packets={deliveredPackets[getPortKey(etcPort)] || []}
-              packetCount={deliveredCounterPerPort[getPortKey(etcPort)] || 0}
-              isActive={
-                animatingPackets.some((p) => p.targetPort === getPortKey(etcPort)) ||
-                streamingPorts.includes(getPortKey(etcPort))
-              }
               isEditing={false}
               editingField={null}
               onCommitEdit={onCommitEdit}
@@ -134,27 +92,12 @@ export function PortLayer({
           )}
         </div>
 
-        {/* Animation zone - packets rising from below */}
-        <div ref={animationZoneRef} className="relative h-32">
-          {/* Stream mode: show fading streams for ports that are active or fading */}
-          {visibleStreamPorts.map((port) => (
-            <StreamFadeOut
-              key={`stream-${port}`}
-              active={streamingPorts.includes(port)}
-              onFadeComplete={() => handleFadeComplete(port)}
-            >
-              <PacketStream targetX={mailboxPositions[portKeyToIndex(port)] || 0} />
-            </StreamFadeOut>
-          ))}
-          {/* Individual packet animations */}
-          {animatingPackets.map((packet) => (
-              <AnimatedPacket
-                key={packet.id}
-                targetX={mailboxPositions[portKeyToIndex(packet.targetPort ?? ETC_PORT_KEY)] || 0}
-                onComplete={() => handleFwToPortComplete(packet.id, packet.targetPort ?? ETC_PORT_KEY)}
-              />
-            ))}
-        </div>
+        {/* Animation zone - independent store subscription */}
+        <PortAnimationZone
+          ports={ports}
+          animationZoneRef={animationZoneRef}
+          mailboxPositions={mailboxPositions}
+        />
       </div>
 
       {/* Scroll hint */}

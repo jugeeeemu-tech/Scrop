@@ -4,13 +4,27 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { EditableLabel } from './EditableLabel';
-import type { AnimatingPacket, PortInfo } from '../../types';
+import { usePortDeliveredPackets, useMailboxPacketCount, useMailboxIsActive } from '../../hooks/usePortLayerStore';
+import { getPortKey } from '../../constants';
+import type { PortInfo } from '../../types';
+
+const GRIP_ICON = <GripVertical className="w-4 h-4 text-muted-foreground" />;
+const X_ICON = <X className="w-5 h-5 text-muted-foreground" />;
+const PACKAGE_ICON_EMPTY = <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />;
+
+const PACKAGE_ICON = (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+    fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    className="w-4 h-4 text-muted-foreground flex-shrink-0">
+    <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" />
+    <path d="M12 22V12" />
+    <polyline points="3.29 7 12 12 20.71 7" />
+    <path d="m7.5 4.27 9 5.15" />
+  </svg>
+);
 
 interface MailboxProps {
   portInfo: PortInfo;
-  packets: AnimatingPacket[];
-  packetCount: number;
-  isActive?: boolean;
   className?: string;
   ref?: React.Ref<HTMLDivElement>;
   isEditing?: boolean;
@@ -23,7 +37,8 @@ interface MailboxProps {
   isDraggable?: boolean;
 }
 
-function MailboxModalList({ packets }: { packets: AnimatingPacket[] }) {
+function MailboxModalList({ portKey }: { portKey: number }) {
+  const packets = usePortDeliveredPackets(portKey);
   const scrollRef = useRef<HTMLDivElement>(null);
   const reversed = packets.slice().reverse();
 
@@ -31,14 +46,14 @@ function MailboxModalList({ packets }: { packets: AnimatingPacket[] }) {
     count: reversed.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 56,
-    overscan: 5,
+    overscan: 10,
   });
 
   if (packets.length === 0) {
     return (
       <div className="p-4">
         <div className="text-center py-8 text-muted-foreground">
-          <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
+          {PACKAGE_ICON_EMPTY}
           <p className="text-sm">No packets yet</p>
         </div>
       </div>
@@ -65,7 +80,7 @@ function MailboxModalList({ packets }: { packets: AnimatingPacket[] }) {
               }}
             >
               <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-2">
-                <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                {PACKAGE_ICON}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-foreground">{packet.protocol}</span>
@@ -86,9 +101,6 @@ function MailboxModalList({ packets }: { packets: AnimatingPacket[] }) {
 
 export function Mailbox({
   portInfo,
-  packets,
-  packetCount,
-  isActive = false,
   className,
   ref,
   isEditing = false,
@@ -100,6 +112,9 @@ export function Mailbox({
   onCancelEdit,
   isDraggable = false,
 }: MailboxProps) {
+  const portKey = getPortKey(portInfo);
+  const packetCount = useMailboxPacketCount(portKey);
+  const isActive = useMailboxIsActive(portKey);
   const [isOpen, setIsOpen] = useState(false);
   const isEtc = portInfo.type === 'etc';
 
@@ -122,7 +137,7 @@ export function Mailbox({
       {/* Drag hint */}
       {isDraggable && (
         <div className="absolute -top-1 -left-1 z-10 opacity-0 group-hover:opacity-50 transition-opacity pointer-events-none">
-          <GripVertical className="w-4 h-4 text-muted-foreground" />
+          {GRIP_ICON}
         </div>
       )}
 
@@ -246,11 +261,11 @@ export function Mailbox({
                 className="p-1 rounded-full hover:bg-muted transition-colors"
                 data-testid="packet-modal-close"
               >
-                <X className="w-5 h-5 text-muted-foreground" />
+                {X_ICON}
               </button>
             </div>
 
-            <MailboxModalList packets={packets} />
+            <MailboxModalList portKey={getPortKey(portInfo)} />
           </div>
         </div>,
         document.body
