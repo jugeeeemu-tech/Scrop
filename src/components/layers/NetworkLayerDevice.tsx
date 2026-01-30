@@ -1,6 +1,7 @@
 import { cn } from '../../lib/utils';
-import { Shield, Cpu, Package } from 'lucide-react';
-import { useState } from 'react';
+import { Shield, Cpu, Package, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
 import { DropStream } from '../packet/DropStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
@@ -17,6 +18,27 @@ interface DroppedPileProps {
 
 export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: DroppedPileProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const tooltipMaxItems = 3;
+  const reversedPackets = packets.slice().reverse();
+  const tooltipPackets = reversedPackets.slice(0, tooltipMaxItems);
+  const remainingCount = count - tooltipMaxItems;
+  const dropLabel = type === 'firewall' ? 'Firewall' : 'NIC';
+
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setIsOpen(false);
+      };
+      document.addEventListener('keydown', handleKeyDown);
+      return () => {
+        document.body.style.overflow = '';
+        document.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [isOpen]);
 
   return (
     <div className="relative" onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} data-testid={`drop-pile-${type}`}>
@@ -34,8 +56,12 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
         ))}
       </div>
 
-      {/* Stacked packages visualization - always maintain fixed width */}
-      <div className="relative w-24 h-20 cursor-pointer">
+      {/* Stacked packages visualization - clickable for modal */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="relative w-24 h-20 cursor-pointer"
+      >
         {/* Render up to 5 stacked packages - only when count > 0 */}
         {count > 0 && packets.slice(-5).map((_, index) => (
           <div
@@ -64,34 +90,95 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
             {count > 99 ? '99+' : count}
           </div>
         )}
-      </div>
+      </button>
 
       {/* Hover tooltip with packet details - only when count > 0 */}
       {isHovered && count > 0 && (
         <div className="absolute left-full ml-4 top-0 z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden" data-testid={`drop-tooltip-${type}`}>
           <div className="p-3 border-b border-border bg-destructive/5">
-            <p className="text-sm font-medium text-foreground">{type === 'firewall' ? 'Firewall' : 'NIC'} Drops</p>
+            <p className="text-sm font-medium text-foreground">{dropLabel} Drops</p>
             <p className="text-xs text-muted-foreground">{count} packet{count !== 1 ? 's' : ''} blocked</p>
           </div>
-          <div className="max-h-48 overflow-y-auto p-2 space-y-1">
-            {packets
-              .slice()
-              .reverse()
-              .slice(0, 10)
-              .map((packet) => (
-                <div key={packet.id} className="p-2 rounded-lg bg-muted/50 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-foreground">{packet.protocol}</span>
-                    <span className="text-muted-foreground">{packet.size}B</span>
-                  </div>
-                  <p className="text-muted-foreground truncate">
-                    {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
-                  </p>
-                  {packet.reason && <p className="text-destructive mt-1 truncate">{packet.reason}</p>}
+          <div className="p-2 space-y-1">
+            {tooltipPackets.map((packet) => (
+              <div key={packet.id} className="p-2 rounded-lg bg-muted/50 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-foreground">{packet.protocol}</span>
+                  <span className="text-muted-foreground">{packet.size}B</span>
                 </div>
-              ))}
+                <p className="text-muted-foreground truncate">
+                  {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
+                </p>
+                {packet.reason && <p className="text-destructive mt-1 truncate">{packet.reason}</p>}
+              </div>
+            ))}
+            {remainingCount > 0 && (
+              <p className="text-xs text-muted-foreground px-2 pt-1">+{remainingCount} more...</p>
+            )}
+          </div>
+          <div className="px-3 pb-2">
+            <p className="text-[10px] text-muted-foreground/70">click to see all</p>
           </div>
         </div>
+      )}
+
+      {/* Packet Detail Modal */}
+      {isOpen && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 backdrop-blur-sm"
+          onClick={() => setIsOpen(false)}
+          data-testid="drop-modal-overlay"
+        >
+          <div
+            className="bg-card border border-border rounded-2xl shadow-2xl max-w-md w-full mx-4 max-h-[70vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <div>
+                <p className="font-medium text-foreground">{dropLabel} Drops</p>
+                <p className="text-xs text-muted-foreground">{count} packet{count !== 1 ? 's' : ''} blocked</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="p-1 rounded-full hover:bg-muted transition-colors"
+                data-testid="drop-modal-close"
+              >
+                <X className="w-5 h-5 text-muted-foreground" />
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto max-h-[50vh]">
+              {packets.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Package className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">No dropped packets</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {reversedPackets.map((packet) => (
+                    <div key={packet.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                      <Package className="w-4 h-4 text-destructive flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">{packet.protocol}</span>
+                          <span className="text-xs text-muted-foreground">{packet.size}B</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
+                        </p>
+                        {packet.reason && (
+                          <p className="text-xs text-destructive mt-1 truncate">{packet.reason}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

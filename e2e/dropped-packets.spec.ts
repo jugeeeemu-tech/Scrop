@@ -86,6 +86,88 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
       // ドロップ情報が含まれる（"Firewall Drops" ヘッダーが表示される）
       await expect(tooltip.getByText('Firewall Drops')).toBeVisible();
     });
+
+    test('ドロップパイルクリックでモーダルが開く', async ({ page }) => {
+      // FWドロップが発生するまで待つ
+      await expect(async () => {
+        const res = await page.request.get('/api/capture/status');
+        const status = await res.json();
+        expect(status.stats.fwDropped).toBeGreaterThan(0);
+      }).toPass({ timeout: 60000 });
+
+      // FW層のドロップパイルをクリック
+      const pile = page.getByTestId('drop-pile-firewall');
+      await pile.scrollIntoViewIfNeeded();
+      await pile.locator('button').click();
+
+      // モーダルが表示される
+      const overlay = page.getByTestId('drop-modal-overlay');
+      await expect(overlay).toBeVisible();
+
+      // ヘッダーに "Firewall Drops" が表示される
+      await expect(overlay.getByText('Firewall Drops')).toBeVisible();
+
+      // パケット詳細が表示される（プロトコル名が含まれるパケット行）
+      await expect(overlay.getByText(/TCP|UDP/)).toBeVisible();
+    });
+
+    test('モーダルを閉じるボタンで閉じられる', async ({ page }) => {
+      // FWドロップが発生するまで待つ
+      await expect(async () => {
+        const res = await page.request.get('/api/capture/status');
+        const status = await res.json();
+        expect(status.stats.fwDropped).toBeGreaterThan(0);
+      }).toPass({ timeout: 60000 });
+
+      // モーダルを開く
+      const pile = page.getByTestId('drop-pile-firewall');
+      await pile.scrollIntoViewIfNeeded();
+      await pile.locator('button').click();
+      await expect(page.getByTestId('drop-modal-overlay')).toBeVisible();
+
+      // Xボタンで閉じる
+      await page.getByTestId('drop-modal-close').click();
+      await expect(page.getByTestId('drop-modal-overlay')).not.toBeVisible();
+    });
+
+    test('モーダルをオーバーレイクリックで閉じられる', async ({ page }) => {
+      // FWドロップが発生するまで待つ
+      await expect(async () => {
+        const res = await page.request.get('/api/capture/status');
+        const status = await res.json();
+        expect(status.stats.fwDropped).toBeGreaterThan(0);
+      }).toPass({ timeout: 60000 });
+
+      // モーダルを開く
+      const pile = page.getByTestId('drop-pile-firewall');
+      await pile.scrollIntoViewIfNeeded();
+      await pile.locator('button').click();
+      const overlay = page.getByTestId('drop-modal-overlay');
+      await expect(overlay).toBeVisible();
+
+      // オーバーレイの端をクリックして閉じる（モーダルダイアログ外）
+      await overlay.click({ position: { x: 10, y: 10 } });
+      await expect(overlay).not.toBeVisible();
+    });
+
+    test('モーダルをEscキーで閉じられる', async ({ page }) => {
+      // FWドロップが発生するまで待つ
+      await expect(async () => {
+        const res = await page.request.get('/api/capture/status');
+        const status = await res.json();
+        expect(status.stats.fwDropped).toBeGreaterThan(0);
+      }).toPass({ timeout: 60000 });
+
+      // モーダルを開く
+      const pile = page.getByTestId('drop-pile-firewall');
+      await pile.scrollIntoViewIfNeeded();
+      await pile.locator('button').click();
+      await expect(page.getByTestId('drop-modal-overlay')).toBeVisible();
+
+      // Escキーで閉じる
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('drop-modal-overlay')).not.toBeVisible();
+    });
   });
 
   test.describe('エラーハンドリング', () => {
