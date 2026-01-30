@@ -1,13 +1,15 @@
 import { Mailbox } from '../port/Mailbox';
 import { AddMailbox } from '../port/AddMailbox';
+import { DraggableMailbox } from '../port/DraggableMailbox';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
-import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
-import { Reorder, useMotionValue, useTransform } from 'framer-motion';
+import { useRef, useState } from 'react';
+import { Reorder } from 'framer-motion';
 import type { AnimatingPacket, PortInfo } from '../../types';
 import { ETC_PORT_KEY, getPortKey } from '../../constants';
+import { usePortPositionStore } from '../../hooks';
 
 interface PortLayerProps {
   ports: PortInfo[];
@@ -28,164 +30,6 @@ interface PortLayerProps {
   onReorderPorts: (newOrder: PortInfo[]) => void;
 }
 
-interface PositionStore {
-  subscribe: (listener: () => void) => () => void;
-  getSnapshot: () => number[];
-  recalculate: () => void;
-}
-
-// Module-level constant to avoid creating new empty array on each getSnapshot call
-const EMPTY_POSITIONS: number[] = [];
-
-function arraysEqual(a: number[], b: number[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
-function createPositionStore(
-  getAnimationZone: () => HTMLDivElement | null,
-  getMailboxRefs: () => (HTMLDivElement | null)[]
-): PositionStore {
-  let positions: number[] = EMPTY_POSITIONS;
-  const listeners = new Set<() => void>();
-
-  const calculatePositions = () => {
-    const zone = getAnimationZone();
-    const refs = getMailboxRefs();
-    if (!zone) return EMPTY_POSITIONS;
-
-    const zoneRect = zone.getBoundingClientRect();
-    return refs.map((ref) => {
-      if (!ref) return 0;
-      const rect = ref.getBoundingClientRect();
-      return rect.left + rect.width / 2 - zoneRect.left;
-    });
-  };
-
-  const updatePositions = () => {
-    const newPositions = calculatePositions();
-    if (!arraysEqual(newPositions, positions)) {
-      positions = newPositions;
-      listeners.forEach((l) => l());
-    }
-  };
-
-  const observer = new ResizeObserver(updatePositions);
-
-  let observing = false;
-
-  return {
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-
-      if (!observing) {
-        const zone = getAnimationZone();
-        if (zone) {
-          positions = calculatePositions();
-          observer.observe(zone);
-          window.addEventListener('resize', updatePositions);
-          observing = true;
-        }
-      }
-
-      return () => {
-        listeners.delete(listener);
-        if (listeners.size === 0 && observing) {
-          observer.disconnect();
-          window.removeEventListener('resize', updatePositions);
-          observing = false;
-        }
-      };
-    },
-    getSnapshot() {
-      if (positions.length === 0) {
-        positions = calculatePositions();
-      }
-      return positions;
-    },
-    recalculate: updatePositions,
-  };
-}
-
-const DELETE_Y_THRESHOLD = 100;
-
-interface DraggableMailboxProps {
-  portInfo: PortInfo;
-  editingKey: string | number;
-  onRemove: () => void;
-  mailboxRef: (el: HTMLDivElement | null) => void;
-  packets: AnimatingPacket[];
-  packetCount: number;
-  isActive: boolean;
-  isEditing: boolean;
-  editingField: 'port' | 'label' | null;
-  onPortChange: (port: number) => void;
-  onLabelChange: (label: string) => void;
-  onStartEdit: (field: 'port' | 'label') => void;
-  onCommitEdit: () => void;
-  onCancelEdit: () => void;
-}
-
-function DraggableMailbox({
-  portInfo,
-  editingKey,
-  onRemove,
-  mailboxRef,
-  ...mailboxProps
-}: DraggableMailboxProps) {
-  const y = useMotionValue(0);
-  const opacity = useTransform(
-    y,
-    [-DELETE_Y_THRESHOLD * 1.5, -DELETE_Y_THRESHOLD, 0, DELETE_Y_THRESHOLD, DELETE_Y_THRESHOLD * 1.5],
-    [0.2, 0.5, 1, 0.5, 0.2]
-  );
-  const wasDragged = useRef(false);
-  const [isDragging, setIsDragging] = useState(false);
-
-  const handleClickCapture = useCallback((e: React.MouseEvent) => {
-    if (wasDragged.current) {
-      e.stopPropagation();
-      e.preventDefault();
-      wasDragged.current = false;
-    }
-  }, []);
-
-  return (
-    <Reorder.Item
-      key={editingKey}
-      as="div"
-      value={portInfo}
-      drag
-      style={{ y, opacity, position: 'relative' }}
-      animate={{
-        scale: isDragging ? 1.05 : 1,
-        boxShadow: isDragging ? '0 8px 25px rgba(0,0,0,0.15)' : '0 0px 0px rgba(0,0,0,0)',
-      }}
-      transition={{ duration: 0.2 }}
-      onDragStart={() => {
-        wasDragged.current = true;
-        setIsDragging(true);
-      }}
-      onDragEnd={(_, info) => {
-        setIsDragging(false);
-        if (
-          Math.abs(info.offset.y) > DELETE_Y_THRESHOLD ||
-          Math.abs(info.velocity.y) > 500
-        ) {
-          onRemove();
-        }
-      }}
-      onClickCapture={handleClickCapture}
-      className=""
-    >
-      <Mailbox ref={mailboxRef} portInfo={portInfo} isDraggable {...mailboxProps} />
-    </Reorder.Item>
-  );
-}
-
 export function PortLayer({
   ports,
   deliveredPackets,
@@ -204,35 +48,8 @@ export function PortLayer({
   onRemovePort,
   onReorderPorts,
 }: PortLayerProps) {
-  const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
   const animationZoneRef = useRef<HTMLDivElement>(null);
-  const storeRef = useRef<PositionStore | null>(null);
-  const recalcRAF = useRef<number>(0);
-
-  // Keep ref array length in sync with ports
-  mailboxRefs.current.length = ports.length;
-
-  if (!storeRef.current) {
-    storeRef.current = createPositionStore(
-      () => animationZoneRef.current,
-      () => mailboxRefs.current
-    );
-  }
-
-  const setMailboxRef = (index: number, el: HTMLDivElement | null) => {
-    mailboxRefs.current[index] = el;
-    // Schedule recalculation after DOM layout settles
-    cancelAnimationFrame(recalcRAF.current);
-    recalcRAF.current = requestAnimationFrame(() => {
-      storeRef.current?.recalculate();
-    });
-  };
-
-  const mailboxPositions = useSyncExternalStore(
-    storeRef.current.subscribe,
-    storeRef.current.getSnapshot,
-    () => EMPTY_POSITIONS // Server snapshot - must return same reference
-  );
+  const { mailboxPositions, setMailboxRef } = usePortPositionStore(animationZoneRef, ports.length);
 
   // Helper: ポートキーから配列インデックスへの逆変換
   const portKeyToIndex = (portKey: number): number => {

@@ -3,3 +3,4 @@ export { useCaptureControl } from './useCaptureControl';
 export { usePacketStore } from './usePacketStore';
 export { usePortStore } from './usePortStore';
 export { useNicStore } from './useNicStore';
+export { usePortPositionStore } from './usePortPositionStore';
