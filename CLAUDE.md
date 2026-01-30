@@ -124,6 +124,9 @@ E2E_PORT=3001 npm run test:e2e                # 別ポートで実行（eBPFサ�
 npm run perf:lighthouse                       # Lighthouse Web Vitals → perf-report/lighthouse.json
 npm run perf:cdp                              # CDP FPS/メモリ/Long Tasks → perf-report/cdp-metrics.json
 npm run perf                                  # 両方実行
+
+# 負荷限界ストレステスト ※ mockサーバを自動起動
+npm run perf:stress                           # 段階的負荷テスト → perf-report/stress-test.json
 ```
 
 ## REST API (scrop-server)

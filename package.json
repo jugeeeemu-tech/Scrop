@@ -15,6 +15,7 @@
     "test:e2e:ui": "playwright test --ui",
     "perf:lighthouse": "npx tsx perf/lighthouse.ts",
     "perf:cdp": "playwright test --config=perf/playwright.config.ts",
+    "perf:stress": "playwright test --config=perf/playwright.config.ts perf/stress.spec.ts",
     "perf": "npm run perf:lighthouse && npm run perf:cdp"
   },
   "dependencies": {
