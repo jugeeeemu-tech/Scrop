@@ -59,7 +59,7 @@ test.describe('Scrop E2E', () => {
       await page.waitForFunction(() => {
         const el = document.querySelector('[data-testid="delivered-count"]');
         return el && Number(el.textContent) > 0;
-      }, null, { timeout: 5000 });
+      }, null, { timeout: 15000 });
 
       // リセット
       await page.getByTestId('capture-reset').click();

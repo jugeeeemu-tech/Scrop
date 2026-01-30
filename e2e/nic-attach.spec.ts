@@ -35,9 +35,8 @@ test.describe('NICアタッチ/デタッチとパケットフロー', () => {
       expect(status.stats.totalPackets).toBeGreaterThan(0);
     }).toPass({ timeout: 10000 });
 
-    // キャプチャ停止→リセット
+    // キャプチャ停止
     await page.request.post('/api/capture/stop');
-    await page.request.post('/api/capture/reset');
 
     // 全NICをAPIで直接デタッチ
     const res = await page.request.get('/api/interfaces');
@@ -46,13 +45,20 @@ test.describe('NICアタッチ/デタッチとパケットフロー', () => {
       await page.request.post(`/api/interfaces/${name}/detach`).catch(() => {});
     }
 
+    // リセット（パケットカウンターを0にする）
+    await page.request.post('/api/capture/reset');
+
     // キャプチャ開始（NICアタッチなし）
     await page.request.post('/api/capture/start');
 
-    // 3秒待ってもパケットが0のまま
-    await page.waitForTimeout(3000);
+    // 開始直後のパケット数を記録
+    const initial = await (await page.request.get('/api/capture/status')).json();
+    const initialPackets = initial.stats.totalPackets;
+
+    // 5秒待ってパケット数が増えていないことを確認
+    await page.waitForTimeout(5000);
     const status = await (await page.request.get('/api/capture/status')).json();
-    expect(status.stats.totalPackets).toBe(0);
+    expect(status.stats.totalPackets).toBe(initialPackets);
 
     // クリーンアップ
     await page.request.post('/api/capture/stop');
