@@ -118,6 +118,7 @@ cargo llvm-cov test --no-default-features -p scrop-capture -p scrop-server
 # E2E テスト (Playwright) ※ mockサーバを自動起動
 npm run test:e2e                              # E2Eテスト実行
 npm run test:e2e:ui                           # UIモードで実行
+E2E_PORT=3001 npm run test:e2e                # 別ポートで実行（eBPFサーバが:3000を占有時）
 ```
 
 ## REST API (scrop-server)
