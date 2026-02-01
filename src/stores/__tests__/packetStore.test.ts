@@ -139,6 +139,8 @@ describe('packetStore', () => {
 
       store.handleFwToPortComplete('pkt-fp-1', 80);
       expect(store.getSnapshot().fwToPortPackets.some((p) => p.id === 'pkt-fp-1')).toBe(false);
+      // deliveredPackets はバッファリングされ 500ms 後にフラッシュ
+      vi.advanceTimersByTime(500);
       expect(store.getSnapshot().deliveredPackets[80].some((p) => p.id === 'pkt-fp-1')).toBe(true);
     });
 
@@ -341,6 +343,8 @@ describe('packetStore', () => {
           store.handleFwToPortComplete(p.id, p.targetPort ?? 80);
         }
       }
+      // deliveredPackets はバッファリングされ 500ms 後にフラッシュ
+      vi.advanceTimersByTime(500);
       expect(store.getSnapshot().deliveredPackets[80].length).toBeLessThanOrEqual(
         MAX_STORED_DELIVERED_PACKETS
       );

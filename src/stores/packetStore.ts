@@ -77,6 +77,51 @@ const activeTimers = {
   fw: null as ReturnType<typeof setTimeout> | null,
 };
 
+// deliveredPackets buffering: buffer packets and flush at 100ms intervals
+let pendingDelivered: Record<number, AnimatingPacket[]> = {};
+let deliveredFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const DELIVERED_FLUSH_INTERVAL = 500; // 2fps - modal list update rate
+
+function appendDeliveredPacket(port: number, packet: AnimatingPacket) {
+  if (!pendingDelivered[port]) pendingDelivered[port] = [];
+  pendingDelivered[port].push(packet);
+
+  if (!deliveredFlushTimer) {
+    deliveredFlushTimer = setTimeout(flushDeliveredPackets, DELIVERED_FLUSH_INTERVAL);
+  }
+}
+
+function flushDeliveredPackets() {
+  deliveredFlushTimer = null;
+  if (Object.keys(pendingDelivered).length === 0) return;
+
+  const newDelivered = { ...store.deliveredPackets };
+  for (const portStr of Object.keys(pendingDelivered)) {
+    const port = Number(portStr);
+    const pending = pendingDelivered[port];
+    const trimmed = pending.length > MAX_STORED_DELIVERED_PACKETS
+      ? pending.slice(-MAX_STORED_DELIVERED_PACKETS)
+      : pending;
+    const keepFromExisting = MAX_STORED_DELIVERED_PACKETS - trimmed.length;
+    const existing = newDelivered[port] || [];
+    newDelivered[port] = keepFromExisting > 0
+      ? [...existing.slice(-keepFromExisting), ...trimmed]
+      : trimmed;
+  }
+  pendingDelivered = {};
+  store = { ...store, deliveredPackets: newDelivered };
+  emitChange();
+
+}
+
+function clearPendingDelivered() {
+  if (deliveredFlushTimer) {
+    clearTimeout(deliveredFlushTimer);
+    deliveredFlushTimer = null;
+  }
+  pendingDelivered = {};
+}
+
 /**
  * 宛先ポート番号からポートキーを計算
  * 設定済みポートに該当すればそのポート番号、なければ ETC_PORT_KEY
@@ -352,7 +397,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
   const isPortStreaming = updatedStreamingPorts.includes(port);
 
   if (isPortStreaming) {
-    // ポートがストリーム中: アニメーションスキップ、直接deliveredPacketsへ
+    // ポートがストリーム中: アニメーションスキップ、バッファに追加
     store = {
       ...store,
       fwActive: true,
@@ -362,11 +407,8 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
         [port]: (store.deliveredCounterPerPort[port] || 0) + 1,
       },
       streamingPorts: updatedStreamingPorts,
-      deliveredPackets: {
-        ...store.deliveredPackets,
-        [port]: [...(store.deliveredPackets[port] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)), packet],
-      },
     };
+    appendDeliveredPacket(port, packet);
   } else {
     // 通常: fwToPortPacketsに追加してアニメーション
     store = {
@@ -483,8 +525,10 @@ export async function resetCapture(): Promise<void> {
     // Increment generation to invalidate pending callbacks
     storeGeneration++;
     clearRateTimes();
+    clearPendingDelivered();
     store = createInitialStore(getPorts());
     emitChange();
+  
     // Restart capture after reset
     await startCapture();
   } catch (err) {
@@ -535,6 +579,7 @@ export function syncPortConfig(ports: PortInfo[]): void {
   }
   store = { ...store, deliveredPackets: newDeliveredPackets, deliveredCounterPerPort: newCounterPerPort };
   emitChange();
+
 }
 
 export function handleIncomingComplete(packetId: string): void {
@@ -559,14 +604,8 @@ export function handleFwToPortComplete(packetId: string, targetPort: number): vo
     store = {
       ...store,
       fwToPortPackets: store.fwToPortPackets.filter((p) => p.id !== packetId),
-      deliveredPackets: {
-        ...store.deliveredPackets,
-        [targetPort]: [
-          ...(store.deliveredPackets[targetPort] || []).slice(-(MAX_STORED_DELIVERED_PACKETS - 1)),
-          packet,
-        ],
-      },
     };
+    appendDeliveredPacket(targetPort, packet);
   } else {
     store = {
       ...store,
@@ -595,8 +634,10 @@ export function clearAll(): void {
   // Increment generation to invalidate pending callbacks
   storeGeneration++;
   clearRateTimes();
+  clearPendingDelivered();
   store = createInitialStore(getPorts());
   emitChange();
+
 }
 
 // Per-field selectors for fine-grained subscriptions
