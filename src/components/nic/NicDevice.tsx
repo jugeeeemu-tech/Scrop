@@ -1,5 +1,5 @@
 import { cn } from '../../lib/utils';
-import { Cpu, Settings } from 'lucide-react';
+import { Plug, Settings } from 'lucide-react';
 import { useState, useEffect, useRef, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
@@ -97,7 +97,7 @@ export function NicDevice({
               isActive ? 'border-foreground bg-card shadow-lg scale-105' : 'border-border bg-card'
             )}
           >
-            <Cpu className="w-8 h-8 text-foreground/70" />
+            <Plug className="w-8 h-8 text-foreground/70" />
           </div>
 
           {/* Post */}
@@ -110,6 +110,7 @@ export function NicDevice({
         <p className="text-xs font-medium text-foreground">NIC</p>
         <p className="text-[10px] text-muted-foreground">XDP Layer</p>
       </div>
+
     </div>
   );
 }
