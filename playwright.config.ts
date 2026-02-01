@@ -24,7 +24,7 @@ export default defineConfig({
       name: 'nic-attach',
       use: { browserName: 'chromium' },
       testMatch: /nic-attach/,
-      dependencies: ['default'],
+      dependencies: ['default', 'stream-transitions'],
     },
     {
       name: 'stream-transitions',
