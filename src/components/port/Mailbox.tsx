@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Package, X, GripVertical } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { EditableLabel } from './EditableLabel';
@@ -37,10 +37,24 @@ interface MailboxProps {
   isDraggable?: boolean;
 }
 
-function MailboxModalList({ portKey }: { portKey: number }) {
+function MailboxBadge({ portKey, testIdSuffix }: { portKey: number; testIdSuffix: string }) {
+  const packetCount = useMailboxPacketCount(portKey);
+  if (packetCount <= 0) return null;
+  return (
+    <div
+      className="absolute -top-2 -right-2 min-w-5 h-5 px-1.5 bg-foreground text-background rounded-full flex items-center justify-center text-xs font-medium"
+      data-testid={`mailbox-badge-${testIdSuffix}`}
+    >
+      {packetCount > 99 ? '99+' : packetCount}
+    </div>
+  );
+}
+
+const MailboxModalList = memo(function MailboxModalList({ portKey }: { portKey: number }) {
+  'use no memo';
   const packets = usePortDeliveredPackets(portKey);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const reversed = packets.slice().reverse();
+  const reversed = useMemo(() => packets.slice().reverse(), [packets]);
 
   const virtualizer = useVirtualizer({
     count: reversed.length,
@@ -97,7 +111,7 @@ function MailboxModalList({ portKey }: { portKey: number }) {
       </div>
     </div>
   );
-}
+});
 
 export function Mailbox({
   portInfo,
@@ -113,7 +127,6 @@ export function Mailbox({
   isDraggable = false,
 }: MailboxProps) {
   const portKey = getPortKey(portInfo);
-  const packetCount = useMailboxPacketCount(portKey);
   const isActive = useMailboxIsActive(portKey);
   const [isOpen, setIsOpen] = useState(false);
   const isEtc = portInfo.type === 'etc';
@@ -170,14 +183,7 @@ export function Mailbox({
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-1.5 bg-foreground/80 rounded-full" />
 
             {/* Packet counter badge */}
-            {packetCount > 0 && (
-              <div
-                className="absolute -top-2 -right-2 min-w-5 h-5 px-1.5 bg-foreground text-background rounded-full flex items-center justify-center text-xs font-medium"
-                data-testid={`mailbox-badge-${isEtc ? 'etc' : portInfo.port}`}
-              >
-                {packetCount > 99 ? '99+' : packetCount}
-              </div>
-            )}
+            <MailboxBadge portKey={portKey} testIdSuffix={isEtc ? 'etc' : String(portInfo.port)} />
           </div>
 
           {/* Post */}

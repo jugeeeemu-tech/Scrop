@@ -16,13 +16,12 @@ interface PortAnimationZoneProps {
 export function PortAnimationZone({ ports, animationZoneRef, mailboxPositions }: PortAnimationZoneProps) {
   const { fwToPortPackets: animatingPackets, streamingPorts } = usePortLayerStore();
 
-  // Helper: ポートキーから配列インデックスへの逆変換
-  const portKeyToIndex = (portKey: number): number => {
-    if (portKey === ETC_PORT_KEY) {
-      return ports.findIndex((p) => p.type === 'etc');
-    }
-    return ports.findIndex((p) => p.type === 'port' && p.port === portKey);
-  };
+  // Helper: ポートキーから配列インデックスへの逆変換 (Map で O(1) ルックアップ)
+  const portKeyToIndexMap = new Map<number, number>();
+  ports.forEach((p, i) => {
+    portKeyToIndexMap.set(p.type === 'port' ? p.port : ETC_PORT_KEY, i);
+  });
+  const portKeyToIndex = (portKey: number) => portKeyToIndexMap.get(portKey) ?? -1;
 
   // Track ports that need visible stream (active or fading out)
   const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>([]);
