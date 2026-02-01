@@ -4,8 +4,6 @@ export const PACKET_ANIMATION_DURATION = 900;
 export const LAYER_ACTIVE_FLASH_DURATION = 300;
 export const STREAM_STAGGER_DELAY = 200;
 export const DROP_ANIMATION_DURATION = 1000;
-export const ANIMATION_INITIAL_DELAY = 50;
-export const PACKET_GENERATION_INTERVAL = 2000;
 
 // Stream mode (rate-based)
 export const STREAM_MODE_RATE_WINDOW = 1000;  // ms - レート計算ウィンドウ
@@ -35,5 +33,3 @@ export const DEFAULT_PORTS: PortInfo[] = [
   { type: 'port', port: 80, label: 'HTTP' },
   { type: 'etc', label: 'Other' },
 ];
-
-export const PROTOCOLS = ['TCP', 'UDP'] as const;
