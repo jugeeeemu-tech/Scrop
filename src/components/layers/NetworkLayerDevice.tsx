@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Shield, Cpu, Package, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { DroppedPacketAnimation } from '../packet/DroppedPacketAnimation';
@@ -287,9 +287,10 @@ interface NetworkLayerDeviceProps {
   dropAnimations: AnimatingPacket[];
   onDropAnimationComplete: (packetId: string) => void;
   isDropStreamMode?: boolean;
+  deviceRef?: RefObject<HTMLDivElement | null>;
 }
 
-export function NetworkLayerDevice({ type, droppedPackets, droppedCount, isActive = false, className, dropAnimations, onDropAnimationComplete, isDropStreamMode = false }: NetworkLayerDeviceProps) {
+export function NetworkLayerDevice({ type, droppedPackets, droppedCount, isActive = false, className, dropAnimations, onDropAnimationComplete, isDropStreamMode = false, deviceRef }: NetworkLayerDeviceProps) {
   const isFirewall = type === 'firewall';
 
   return (
@@ -308,6 +309,7 @@ export function NetworkLayerDevice({ type, droppedPackets, droppedCount, isActiv
 
             {/* Device body - mailbox style */}
             <div
+              ref={deviceRef}
               className={cn(
                 'relative w-24 h-20 rounded-t-full rounded-b-lg border-2 transition-all duration-300 flex items-center justify-center',
                 isActive ? 'border-foreground bg-card shadow-lg scale-105' : 'border-border bg-card'

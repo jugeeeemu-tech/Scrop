@@ -1,9 +1,10 @@
+import { useRef } from 'react';
 import { NetworkLayerDevice } from './NetworkLayerDevice';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
 import { ScrollHint } from '../common/ScrollHint';
-import { useLayerCenterX } from '../../hooks';
+import { useDeviceAlignX } from '../../hooks';
 import type { AnimatingPacket } from '../../types';
 
 type LayerVariant = 'firewall' | 'nic';
@@ -35,7 +36,9 @@ export function NetworkLayer({
   isPacketStreamMode = false,
   showScrollHint = false,
 }: NetworkLayerProps) {
-  const { ref: animationZoneRef, centerX } = useLayerCenterX();
+  const deviceRef = useRef<HTMLDivElement>(null);
+  const animationZoneRef = useRef<HTMLDivElement>(null);
+  const centerX = useDeviceAlignX(deviceRef, animationZoneRef);
 
   const isFirewall = variant === 'firewall';
   const sectionClass = isFirewall ? 'min-h-[60vh] bg-muted/30' : 'min-h-[50vh] bg-muted/50';
@@ -51,11 +54,12 @@ export function NetworkLayer({
           dropAnimations={dropAnimations}
           onDropAnimationComplete={onDropAnimationComplete}
           isDropStreamMode={isDropStreamMode}
+          deviceRef={deviceRef}
         />
       </div>
 
       {/* Animation zone */}
-      <div ref={animationZoneRef} className="relative h-24 max-w-4xl mx-auto">
+      <div ref={animationZoneRef} className="relative h-24 mx-auto">
         <StreamFadeOut active={isPacketStreamMode}>
           <PacketStream targetX={centerX} />
         </StreamFadeOut>

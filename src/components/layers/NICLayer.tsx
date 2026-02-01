@@ -1,9 +1,10 @@
+import { useRef } from 'react';
 import { NicDevice } from '../nic/NicDevice';
 import { DroppedPile } from './NetworkLayerDevice';
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
-import { useLayerCenterX } from '../../hooks';
+import { useDeviceAlignX } from '../../hooks';
 import { useNICLayerStore } from '../../hooks/useNICLayerStore';
 import { handleDropAnimationComplete, handleIncomingComplete } from '../../stores/packetStore';
 
@@ -28,7 +29,9 @@ export function NICLayer({
     nicActive,
   } = useNICLayerStore();
 
-  const { ref: animationZoneRef, centerX } = useLayerCenterX();
+  const deviceRef = useRef<HTMLDivElement>(null);
+  const animationZoneRef = useRef<HTMLDivElement>(null);
+  const centerX = useDeviceAlignX(deviceRef, animationZoneRef);
 
   return (
     <section className="min-h-[50vh] bg-muted/50 relative">
@@ -41,6 +44,7 @@ export function NICLayer({
               attachedNics={attachedNics}
               onToggleNic={onToggleNic}
               isActive={nicActive}
+              deviceRef={deviceRef}
             />
 
             {/* Dropped packets pile */}
@@ -57,7 +61,7 @@ export function NICLayer({
       </div>
 
       {/* Animation zone */}
-      <div ref={animationZoneRef} className="relative h-24 max-w-4xl mx-auto">
+      <div ref={animationZoneRef} className="relative h-24 mx-auto">
         <StreamFadeOut active={isIncomingStreamMode}>
           <PacketStream targetX={centerX} />
         </StreamFadeOut>

@@ -1,4 +1,5 @@
 export { useLayerCenterX } from './useLayerCenterX';
+export { useDeviceAlignX } from './useDeviceAlignX';
 export { useCaptureControl } from './useCaptureControl';
 export { usePacketStore } from './usePacketStore';
 export { useHeaderStore } from './useHeaderStore';

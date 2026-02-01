@@ -1,6 +1,6 @@
 import { cn } from '../../lib/utils';
 import { Cpu, Settings } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type RefObject } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 interface NicDeviceProps {
@@ -8,6 +8,7 @@ interface NicDeviceProps {
   attachedNics: Set<string>;
   onToggleNic: (name: string) => void;
   isActive: boolean;
+  deviceRef?: RefObject<HTMLDivElement | null>;
 }
 
 export function NicDevice({
@@ -15,6 +16,7 @@ export function NicDevice({
   attachedNics,
   onToggleNic,
   isActive,
+  deviceRef,
 }: NicDeviceProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -89,6 +91,7 @@ export function NicDevice({
 
           {/* Device body */}
           <div
+            ref={deviceRef}
             className={cn(
               'relative w-24 h-20 rounded-t-full rounded-b-lg border-2 transition-all duration-300 flex items-center justify-center',
               isActive ? 'border-foreground bg-card shadow-lg scale-105' : 'border-border bg-card'
