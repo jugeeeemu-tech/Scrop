@@ -88,10 +88,13 @@ export function usePortPositionStore(
 ): {
   mailboxPositions: number[];
   setMailboxRef: (index: number, el: HTMLDivElement | null) => void;
+  startPolling: () => void;
+  stopPolling: () => void;
 } {
   const mailboxRefs = useRef<(HTMLDivElement | null)[]>([]);
   const storeRef = useRef<PositionStore | null>(null);
-  const recalcRAF = useRef<number>(0);
+  const rafRef = useRef<number>(0);
+  const pollingRef = useRef(false);
 
   // Keep ref array length in sync with ports
   mailboxRefs.current.length = portCount;
@@ -103,13 +106,46 @@ export function usePortPositionStore(
     );
   }
 
+  const runPollingLoop = (maxFrames: number) => {
+    cancelAnimationFrame(rafRef.current);
+    let frame = 0;
+    const poll = () => {
+      storeRef.current?.recalculate();
+      if (++frame < maxFrames) {
+        rafRef.current = requestAnimationFrame(poll);
+      }
+    };
+    rafRef.current = requestAnimationFrame(poll);
+  };
+
   const setMailboxRef = (index: number, el: HTMLDivElement | null) => {
     mailboxRefs.current[index] = el;
     // Schedule recalculation after DOM layout settles
-    cancelAnimationFrame(recalcRAF.current);
-    recalcRAF.current = requestAnimationFrame(() => {
+    if (!pollingRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        storeRef.current?.recalculate();
+      });
+    }
+  };
+
+  const startPolling = () => {
+    if (pollingRef.current) return;
+    pollingRef.current = true;
+    cancelAnimationFrame(rafRef.current);
+    const poll = () => {
       storeRef.current?.recalculate();
-    });
+      if (pollingRef.current) {
+        rafRef.current = requestAnimationFrame(poll);
+      }
+    };
+    rafRef.current = requestAnimationFrame(poll);
+  };
+
+  const stopPolling = () => {
+    pollingRef.current = false;
+    // Continue polling briefly to track the settle animation
+    runPollingLoop(30);
   };
 
   const mailboxPositions = useSyncExternalStore(
@@ -118,5 +154,5 @@ export function usePortPositionStore(
     () => EMPTY_POSITIONS // Server snapshot - must return same reference
   );
 
-  return { mailboxPositions, setMailboxRef };
+  return { mailboxPositions, setMailboxRef, startPolling, stopPolling };
 }

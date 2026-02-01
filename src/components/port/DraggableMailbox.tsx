@@ -17,6 +17,8 @@ interface DraggableMailboxProps {
   onStartEdit: (field: 'port' | 'label') => void;
   onCommitEdit: () => void;
   onCancelEdit: () => void;
+  onDragSessionStart?: () => void;
+  onDragSessionEnd?: () => void;
 }
 
 export function DraggableMailbox({
@@ -24,6 +26,8 @@ export function DraggableMailbox({
   editingKey,
   onRemove,
   mailboxRef,
+  onDragSessionStart,
+  onDragSessionEnd,
   ...mailboxProps
 }: DraggableMailboxProps) {
   const y = useMotionValue(0);
@@ -58,9 +62,11 @@ export function DraggableMailbox({
       onDragStart={() => {
         wasDragged.current = true;
         setIsDragging(true);
+        onDragSessionStart?.();
       }}
       onDragEnd={(_, info) => {
         setIsDragging(false);
+        onDragSessionEnd?.();
         if (
           Math.abs(info.offset.y) > DELETE_Y_THRESHOLD ||
           Math.abs(info.velocity.y) > 500
