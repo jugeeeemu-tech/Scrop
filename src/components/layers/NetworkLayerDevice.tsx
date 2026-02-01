@@ -160,7 +160,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
   return (
     <div ref={containerRef} className="relative" onMouseEnter={handleMouseEnter} onMouseLeave={() => setIsHovered(false)} data-testid={`drop-pile-${type}`}>
       {/* Drop animations - positioned at the center of the pile */}
-      <div className="absolute bottom-4 left-4 z-20">
+      <div className="absolute bottom-4 left-4 z-20 pointer-events-none">
         <StreamFadeOut active={isDropStreamMode}>
           <DropStream />
         </StreamFadeOut>
