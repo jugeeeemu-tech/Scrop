@@ -104,6 +104,9 @@ const MailboxModalList = memo(function MailboxModalList({ portKey }: { portKey: 
                     {packet.source}:{packet.srcPort} → {packet.destination}:{packet.destPort}
                   </p>
                 </div>
+                <span className="text-[10px] text-muted-foreground/70 self-end flex-shrink-0">
+                  {new Date(packet.timestamp).toLocaleTimeString()}
+                </span>
               </div>
             </div>
           );

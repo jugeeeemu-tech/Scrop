@@ -81,6 +81,9 @@ function DroppedModalList({ packets }: { packets: AnimatingPacket[] }) {
                     <p className="text-xs text-destructive mt-1 truncate">{packet.reason}</p>
                   )}
                 </div>
+                <span className="text-[10px] text-muted-foreground/70 self-end flex-shrink-0">
+                  {new Date(packet.timestamp).toLocaleTimeString()}
+                </span>
               </div>
             </div>
           );
