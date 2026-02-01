@@ -59,7 +59,7 @@ const MailboxModalList = memo(function MailboxModalList({ portKey }: { portKey: 
   const virtualizer = useVirtualizer({
     count: reversed.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 56,
+    estimateSize: () => 64,
     overscan: 10,
   });
 
@@ -93,7 +93,7 @@ const MailboxModalList = memo(function MailboxModalList({ portKey }: { portKey: 
                 transform: `translateY(${virtualItem.start}px)`,
               }}
             >
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-2">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-3">
                 {PACKAGE_ICON}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">

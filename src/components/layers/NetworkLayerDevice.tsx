@@ -33,7 +33,7 @@ function DroppedModalList({ packets }: { packets: AnimatingPacket[] }) {
   const virtualizer = useVirtualizer({
     count: packets.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 72,
+    estimateSize: () => 80,
     overscan: 5,
   });
 
@@ -67,7 +67,7 @@ function DroppedModalList({ packets }: { packets: AnimatingPacket[] }) {
                 transform: `translateY(${virtualItem.start}px)`,
               }}
             >
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-2">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 mb-3">
                 <Package className="w-4 h-4 text-destructive flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
