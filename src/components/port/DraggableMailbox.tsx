@@ -73,6 +73,13 @@ export function DraggableMailbox({
         ) {
           onRemove();
         }
+        // Reset wasDragged after the current event loop completes.
+        // handleClickCapture may suppress a ghost click synchronously,
+        // but if no ghost click fires (direction-dependent), this ensures
+        // the flag is cleared before the user's next intentional click.
+        requestAnimationFrame(() => {
+          wasDragged.current = false;
+        });
       }}
       onClickCapture={handleClickCapture}
       className=""
