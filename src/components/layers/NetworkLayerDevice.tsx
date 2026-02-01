@@ -176,7 +176,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
       {/* Stacked packages visualization - clickable for modal */}
       <button
         type="button"
-        onClick={() => setIsOpen(true)}
+        onClick={() => { setIsHovered(false); setIsOpen(true); }}
         className="relative w-24 h-20 cursor-pointer"
       >
         {/* Render up to 5 stacked packages - only when count > 0 */}
@@ -210,7 +210,7 @@ export function DroppedPile({ packets, count, type, dropAnimations, onDropAnimat
       </button>
 
       {/* Hover tooltip with packet details - only when count > 0 */}
-      {isHovered && count > 0 && (
+      {isHovered && !isOpen && count > 0 && (
         <div
           className="absolute z-50 w-72 bg-card border border-border rounded-xl shadow-xl overflow-hidden"
           style={tooltipStyle}
