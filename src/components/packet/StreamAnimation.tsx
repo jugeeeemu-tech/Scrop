@@ -18,6 +18,7 @@ export function StreamAnimation({ variant, targetX }: StreamAnimationProps) {
     return (
       <div
         className="absolute bottom-0 h-full w-6"
+        data-testid="packet-stream"
         style={{ left: targetX, transform: 'translateX(-50%)' }}
       >
         {Array.from({ length: STREAM_PACKET_COUNT }, (_, index) => (
@@ -37,7 +38,7 @@ export function StreamAnimation({ variant, targetX }: StreamAnimationProps) {
 
   // Drop variant
   return (
-    <div>
+    <div data-testid="drop-stream">
       {Array.from({ length: STREAM_PACKET_COUNT }, (_, index) => (
         <div
           key={index}

@@ -17,6 +17,7 @@ export function DroppedPacketAnimation({ direction, onComplete }: DroppedPacketA
   return (
     <motion.div
       className="absolute bottom-0 left-0"
+      data-testid="drop-animation"
       style={{ willChange: 'transform, opacity' }}
       initial={{ opacity: 1, x: -96, rotate: 0 }}
       animate={{ opacity: 0, x: translateX, rotate: 12 }}

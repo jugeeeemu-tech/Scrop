@@ -83,6 +83,7 @@ export function NicDevice({
         <div className="relative">
           {/* Flag indicator */}
           <div
+            data-testid="nic-flag"
             className={cn(
               'absolute -right-3 top-4 w-3 h-6 rounded-sm transition-all duration-500 origin-bottom',
               isActive ? 'bg-success rotate-0' : 'bg-muted-foreground/30 -rotate-45'

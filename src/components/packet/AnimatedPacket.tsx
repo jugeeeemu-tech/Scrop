@@ -15,6 +15,7 @@ export function AnimatedPacket({ targetX, onComplete }: AnimatedPacketProps) {
   return (
     <motion.div
       className="absolute z-10"
+      data-testid="animated-packet"
       style={{ left: targetX, x: '-50%', willChange: 'transform, opacity' }}
       initial={{ bottom: 0, opacity: 1, scale: 1 }}
       animate={{ bottom: 'calc(100% - 10px)', opacity: 0, scale: 0.5 }}

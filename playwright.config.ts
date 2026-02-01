@@ -18,12 +18,18 @@ export default defineConfig({
     {
       name: 'default',
       use: { browserName: 'chromium' },
-      testIgnore: /nic-attach/,
+      testIgnore: /nic-attach|stream-transitions/,
     },
     {
       name: 'nic-attach',
       use: { browserName: 'chromium' },
       testMatch: /nic-attach/,
+      dependencies: ['default'],
+    },
+    {
+      name: 'stream-transitions',
+      use: { browserName: 'chromium' },
+      testMatch: /stream-transitions/,
       dependencies: ['default'],
     },
   ],
