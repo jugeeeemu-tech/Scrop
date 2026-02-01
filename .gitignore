@@ -27,5 +27,14 @@ dist-ssr
 # Performance reports
 perf-report/
 
+# Test reports
+coverage/
+playwright-report/
+test-results/
+
 # Rust build artifacts
 target
+scrop-common/Cargo.lock
+
+# eBPF generated files
+scrop-ebpf/src/vmlinux.h
