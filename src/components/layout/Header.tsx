@@ -1,8 +1,8 @@
-import { Activity, AlertCircle, Pause, Play, RotateCcw } from 'lucide-react';
+import { AlertCircle, Mailbox, Pause, Play, RotateCcw } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useHeaderStore } from '../../hooks/useHeaderStore';
 
-const ACTIVITY_ICON = <Activity className="w-5 h-5 text-foreground" />;
+const MAILBOX_ICON = <Mailbox className="w-5 h-5 text-foreground" />;
 const PAUSE_ICON = <Pause className="w-4 h-4" />;
 const PLAY_ICON = <Play className="w-4 h-4" />;
 const ROTATE_CCW_ICON = <RotateCcw className="w-4 h-4" />;
@@ -21,7 +21,7 @@ export function Header({ isCapturing, onToggleCapture, onReset }: HeaderProps) {
     <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-sm border-b border-border">
       <div className="h-[var(--header-height)] max-w-6xl mx-auto px-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {ACTIVITY_ICON}
+          {MAILBOX_ICON}
           <span className="font-medium text-foreground">Scrop</span>
           <span className="text-sm text-muted-foreground hidden sm:inline">Packet Capture Visualizer</span>
         </div>
