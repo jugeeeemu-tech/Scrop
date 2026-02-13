@@ -1,25 +1,26 @@
 # Scrop
 
-Scrop is a packet capture visualizer.
-It renders packets as parcel-like animations flowing into mailbox-like ports.
-
-The repository provides two runtimes:
-
-- `scrop-server`: single Linux binary for browser usage (serves embedded frontend + API + WebSocket)
-- `scrop` (Tauri): desktop app runtime
+Packet capture visualizer.
 
 ## Latest Release
 
 - GitHub Releases: https://github.com/jugeeeemu-tech/Scrop/releases
 - Current stable tag: `v0.1.0`
-- Release asset for browser runtime:
+
+## Release Build Contents
+
+- Runtime binary:
   - `scrop-server-v0.1.0-linux-x86_64.tar.gz`
+- Checksum file:
   - `scrop-server-v0.1.0-linux-x86_64.tar.gz.sha256`
 
-## Quick Start (Release Binary)
+`scrop-server` is a single binary for browser usage.
+After launch, open `http://127.0.0.1:3000`.
+
+## Installation
 
 ```bash
-# 1) verify
+# 1) verify archive
 sha256sum -c scrop-server-v0.1.0-linux-x86_64.tar.gz.sha256
 
 # 2) extract
@@ -33,88 +34,15 @@ sudo ./scrop-server
 
 Then open `http://127.0.0.1:3000` in your browser.
 
-## Permissions (eBPF mode)
-
-`scrop-server` and `scrop` require eBPF-related capabilities:
-`CAP_BPF`, `CAP_NET_ADMIN`, `CAP_PERFMON`.
-
-Use either:
-
-```bash
-sudo ./scrop-server
-```
-
-or:
+If you do not want to use `sudo` every time:
 
 ```bash
 sudo setcap 'cap_bpf,cap_net_admin,cap_perfmon+ep' ./scrop-server
 ./scrop-server
 ```
 
-## Requirements
+## Constraints
 
 - Linux (x86_64 for current release asset)
 - Kernel 5.x+ (XDP/BTF support)
-- Elevated privileges/capabilities for eBPF runtime
-
-## Build From Source
-
-```bash
-npm ci
-npm run build
-cargo build --release -p scrop-server
-```
-
-Binary output:
-
-- `target/release/scrop-server`
-
-## Development
-
-Web mode (two terminals):
-
-```bash
-# terminal 1
-cargo run -p scrop-server
-
-# terminal 2
-npm run dev
-```
-
-Mock mode (no eBPF privileges required):
-
-```bash
-npm run build
-cargo run -p scrop-server --no-default-features
-```
-
-Tauri desktop mode:
-
-```bash
-npm run tauri dev
-```
-
-## Tests
-
-```bash
-# frontend
-npm test
-npm run test:coverage
-
-# backend (mock mode)
-cargo test --no-default-features -p scrop-capture -p scrop-server
-
-# e2e
-npm run test:e2e
-```
-
-## API Endpoints (scrop-server)
-
-- `POST /api/capture/start`
-- `POST /api/capture/stop`
-- `GET /api/capture/status`
-- `POST /api/capture/reset`
-- `GET /api/interfaces`
-- `POST /api/interfaces/:name/attach`
-- `POST /api/interfaces/:name/detach`
-- `GET /ws`
+- eBPF privileges are required (`CAP_BPF`, `CAP_NET_ADMIN`, `CAP_PERFMON`)
