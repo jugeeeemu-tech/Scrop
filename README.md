@@ -17,6 +17,17 @@ Packet capture visualizer.
 `scrop-server` is a single binary for browser usage.
 After launch, open `http://127.0.0.1:3000`.
 
+## Download From GitHub
+
+```bash
+mkdir -p /tmp/scrop-v0.1.0 && cd /tmp/scrop-v0.1.0
+curl -fLO https://github.com/jugeeeemu-tech/Scrop/releases/download/v0.1.0/scrop-server-v0.1.0-linux-x86_64.tar.gz
+curl -fLO https://github.com/jugeeeemu-tech/Scrop/releases/download/v0.1.0/scrop-server-v0.1.0-linux-x86_64.tar.gz.sha256
+sha256sum -c scrop-server-v0.1.0-linux-x86_64.tar.gz.sha256
+tar -xzf scrop-server-v0.1.0-linux-x86_64.tar.gz
+sudo ./scrop-server
+```
+
 ## Installation
 
 ```bash
