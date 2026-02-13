@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import type { PortInfo } from '../src/types';
+import { configureMock } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -24,6 +25,15 @@ async function getMailboxOrder(page: Page): Promise<string[]> {
       }))
       .sort((a, b) => a.x - b.x)
       .map((item) => item.testId);
+  });
+}
+
+/** packet-stream の left 座標を昇順で取得 */
+async function getPacketStreamLefts(page: Page): Promise<number[]> {
+  return page.evaluate(() => {
+    return Array.from(document.querySelectorAll('[data-testid="packet-stream"]'))
+      .map((el) => Math.round(el.getBoundingClientRect().left))
+      .sort((a, b) => a - b);
   });
 }
 
@@ -184,6 +194,43 @@ test.describe('ポートレイヤ: ドラッグ&ドロップ・削除', () => {
       const parsed = JSON.parse(stored!) as PortInfo[];
       const has443 = parsed.some((p) => p.type === 'port' && p.port === 443);
       expect(has443).toBe(false);
+    });
+
+    test('削除直後に左端へストリームが残らない', async ({ page }) => {
+      await page.request.post('/api/capture/stop');
+      await page.request.post('/api/capture/reset');
+      await configureMock(page, {
+        intervalMs: 20,
+        batchSize: 5,
+        nicDropRate: 0,
+        fwDropRate: 0,
+      });
+
+      await page.evaluate(() => {
+        localStorage.setItem('scrop:attached-nics', JSON.stringify(['eth0']));
+      });
+      await seedPorts(page, SEED_PORTS);
+      await page.reload();
+      await page.waitForSelector('[data-testid="mailbox-443"]');
+      await page.request.post('/api/capture/start');
+
+      await expect(async () => {
+        const lefts = await getPacketStreamLefts(page);
+        expect(lefts.length).toBeGreaterThan(0);
+      }).toPass({ timeout: 10000 });
+
+      const source = await getCenter(page, 'mailbox-443');
+      await drag(page, source, 0, 150);
+
+      await expect(page.getByTestId('mailbox-443')).not.toBeVisible({ timeout: 5000 });
+
+      await expect(async () => {
+        const lefts = await getPacketStreamLefts(page);
+        const hasLeftEdgeResidue = lefts.some((left) => left <= 20);
+        expect(hasLeftEdgeResidue).toBe(false);
+      }).toPass({ timeout: 1500 });
+
+      await page.request.post('/api/capture/stop');
     });
 
     test('etcポートはドラッグで削除できない', async ({ page }) => {
