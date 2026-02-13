@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use tracing::info;
 
 use crate::types::PacketResult;
 
@@ -37,8 +38,7 @@ impl DropReasonResolver {
     /// 失敗時は `Err(String)` を返す（フォールバックなし）。
     pub fn new() -> Result<Self, String> {
         let btf_path = "/sys/kernel/btf/vmlinux";
-        let data = fs::read(btf_path)
-            .map_err(|e| format!("Failed to read {}: {}", btf_path, e))?;
+        let data = fs::read(btf_path).map_err(|e| format!("Failed to read {}: {}", btf_path, e))?;
 
         Self::from_btf_bytes(&data)
     }
@@ -78,10 +78,7 @@ impl DropReasonResolver {
 
         match result {
             Some((names, fw_reasons)) => {
-                eprintln!(
-                    "BTF drop reason resolver loaded: {} reasons",
-                    names.len()
-                );
+                info!(reasons = names.len(), "BTF drop reason resolver loaded");
                 Ok(Self { names, fw_reasons })
             }
             None => Err("enum skb_drop_reason not found in BTF".into()),
@@ -98,10 +95,8 @@ impl DropReasonResolver {
 
         while offset + 12 <= type_section.len() {
             // btf_type: name_off(4) + info(4) + size_or_type(4) = 12 bytes
-            let name_off =
-                u32::from_le_bytes(type_section[offset..offset + 4].try_into().unwrap());
-            let info =
-                u32::from_le_bytes(type_section[offset + 4..offset + 8].try_into().unwrap());
+            let name_off = u32::from_le_bytes(type_section[offset..offset + 4].try_into().unwrap());
+            let info = u32::from_le_bytes(type_section[offset + 4..offset + 8].try_into().unwrap());
 
             let kind = (info >> 24) & 0x1f;
             let vlen = info & 0xffff;
@@ -131,15 +126,15 @@ impl DropReasonResolver {
     /// 各 BTF kind のバリアント/メンバーデータサイズを計算してスキップする。
     fn extra_bytes(kind: u32, vlen: u32) -> u32 {
         match kind {
-            1 => 4,              // BTF_KIND_INT
-            3 => 12,             // BTF_KIND_ARRAY
-            4 | 5 => vlen * 12,  // BTF_KIND_STRUCT / BTF_KIND_UNION
-            6 => vlen * 8,       // BTF_KIND_ENUM
-            13 => vlen * 8,      // BTF_KIND_FUNC_PROTO
-            14 => 4,             // BTF_KIND_VAR
-            15 => vlen * 12,     // BTF_KIND_DATASEC
-            17 => 4,             // BTF_KIND_DECL_TAG
-            19 => vlen * 12,     // BTF_KIND_ENUM64
+            1 => 4,             // BTF_KIND_INT
+            3 => 12,            // BTF_KIND_ARRAY
+            4 | 5 => vlen * 12, // BTF_KIND_STRUCT / BTF_KIND_UNION
+            6 => vlen * 8,      // BTF_KIND_ENUM
+            13 => vlen * 8,     // BTF_KIND_FUNC_PROTO
+            14 => 4,            // BTF_KIND_VAR
+            15 => vlen * 12,    // BTF_KIND_DATASEC
+            17 => 4,            // BTF_KIND_DECL_TAG
+            19 => vlen * 12,    // BTF_KIND_ENUM64
             // PTR, FWD, TYPEDEF, VOLATILE, CONST, RESTRICT, FUNC, FLOAT, TYPE_TAG
             _ => 0,
         }
@@ -163,18 +158,21 @@ impl DropReasonResolver {
                 break;
             }
 
-            let name_off = u32::from_le_bytes(
-                type_section[entry_off..entry_off + 4].try_into().unwrap(),
-            );
+            let name_off =
+                u32::from_le_bytes(type_section[entry_off..entry_off + 4].try_into().unwrap());
             let val = if kind == BTF_KIND_ENUM64 {
                 let lo = u32::from_le_bytes(
-                    type_section[entry_off + 4..entry_off + 8].try_into().unwrap(),
+                    type_section[entry_off + 4..entry_off + 8]
+                        .try_into()
+                        .unwrap(),
                 );
                 // high 32 bits are not needed for drop reasons (values are small)
                 lo
             } else {
                 u32::from_le_bytes(
-                    type_section[entry_off + 4..entry_off + 8].try_into().unwrap(),
+                    type_section[entry_off + 4..entry_off + 8]
+                        .try_into()
+                        .unwrap(),
                 )
             };
 
@@ -315,7 +313,7 @@ mod tests {
         assert_eq!(resolver.names.get(&8).unwrap(), "NETFILTER_DROP");
 
         // FW 関連判定
-        assert!(resolver.fw_reasons.contains(&8));  // NETFILTER
+        assert!(resolver.fw_reasons.contains(&8)); // NETFILTER
         assert!(resolver.fw_reasons.contains(&20)); // IPTABLES
         assert!(resolver.fw_reasons.contains(&21)); // NFTABLES
         assert!(!resolver.fw_reasons.contains(&0));

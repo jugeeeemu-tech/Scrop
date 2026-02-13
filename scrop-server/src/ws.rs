@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
+use tracing::warn;
 
 use scrop_capture::AppState;
 
@@ -28,12 +29,12 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Failed to serialize packet: {}", e);
+                                warn!(error = %e, "failed to serialize packet");
                             }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        eprintln!("WebSocket client lagged, skipped {} messages", n);
+                        warn!(skipped = n, "websocket client lagged");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         break; // Channel closed

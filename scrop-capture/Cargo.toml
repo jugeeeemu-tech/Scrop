@@ -9,6 +9,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 rand = "0.9"
 chrono = "0.4"
+tracing = "0.1"
 
 # eBPF dependencies (optional)
 aya = { version = "0.13", features = ["async_tokio"], optional = true }

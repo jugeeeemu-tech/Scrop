@@ -1,9 +1,13 @@
 use std::sync::Arc;
 use tauri::{Emitter, State};
 use tokio::task::JoinHandle;
+use tracing::Level;
+use tracing_subscriber::filter::{filter_fn, LevelFilter};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{fmt, EnvFilter};
 
-use scrop_capture::AppState as CaptureState;
 use scrop_capture::types::CaptureStats;
+use scrop_capture::AppState as CaptureState;
 
 pub struct AppState {
     inner: Arc<CaptureState>,
@@ -27,6 +31,24 @@ impl AppState {
 }
 
 const EVENT_CAPTURED: &str = "packet:captured";
+
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let _ = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_filter(filter_fn(|metadata| *metadata.level() <= Level::INFO)),
+        )
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(LevelFilter::WARN),
+        )
+        .try_init();
+}
 
 #[tauri::command]
 async fn start_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
@@ -89,13 +111,19 @@ async fn list_interfaces(state: State<'_, AppState>) -> Result<Vec<String>, Stri
 #[tauri::command]
 async fn attach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
     let capture = state.inner.capture.lock().await;
-    capture.attach_interface(&interface).await.map_err(|e| e.to_string())
+    capture
+        .attach_interface(&interface)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn detach_interface(state: State<'_, AppState>, interface: String) -> Result<(), String> {
     let capture = state.inner.capture.lock().await;
-    capture.detach_interface(&interface).await.map_err(|e| e.to_string())
+    capture
+        .detach_interface(&interface)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -108,9 +136,11 @@ pub struct CaptureStatusResponse {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_tracing();
+
     #[cfg(feature = "ebpf")]
     if let Err(e) = scrop_capture::check_permissions() {
-        eprintln!("Error: {}", e);
+        tracing::error!(error = %e, "permission check failed");
         std::process::exit(1);
     }
 

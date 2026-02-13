@@ -1,14 +1,15 @@
-pub mod types;
-#[cfg(not(feature = "ebpf"))]
-pub mod mock;
 #[cfg(feature = "ebpf")]
 pub mod drop_reason;
 #[cfg(feature = "ebpf")]
 pub mod ebpf;
+#[cfg(not(feature = "ebpf"))]
+pub mod mock;
+pub mod types;
 
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
-use types::{CapturedPacket, CaptureStats};
+use tracing::info;
+use types::{CaptureStats, CapturedPacket};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -139,7 +140,9 @@ impl CaptureBackend {
         batch_size: Option<u32>,
     ) -> Result<mock::MockConfig, CaptureError> {
         match self {
-            CaptureBackend::Mock(m) => m.update_config(interval_ms, nic_drop_rate, fw_drop_rate, batch_size),
+            CaptureBackend::Mock(m) => {
+                m.update_config(interval_ms, nic_drop_rate, fw_drop_rate, batch_size)
+            }
         }
     }
 }
@@ -161,12 +164,12 @@ pub fn detect_all_interfaces() -> Vec<String> {
 fn create_backend() -> CaptureBackend {
     #[cfg(feature = "ebpf")]
     {
-        eprintln!("Using eBPF capture backend");
+        info!("using eBPF capture backend");
         CaptureBackend::Ebpf(ebpf::EbpfCapture::new())
     }
     #[cfg(not(feature = "ebpf"))]
     {
-        eprintln!("Using mock capture backend");
+        info!("using mock capture backend");
         CaptureBackend::Mock(mock::MockCapture::new())
     }
 }

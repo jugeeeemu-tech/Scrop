@@ -6,13 +6,14 @@ use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use aya::maps::{AsyncPerfEventArray, HashMap as AyaHashMap};
-use aya::programs::{TracePoint, Xdp, XdpFlags};
 use aya::programs::xdp::XdpLinkId;
+use aya::programs::{TracePoint, Xdp, XdpFlags};
 use aya::util::online_cpus;
 use aya::{Btf, EbpfLoader};
 use bytes::BytesMut;
+use tracing::{error, info, warn};
 
-use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult, Protocol};
+use crate::types::{AnimatingPacket, CaptureStats, CapturedPacket, PacketResult, Protocol};
 use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS};
 
 use crate::drop_reason::DropReasonResolver;
@@ -23,8 +24,9 @@ use crate::CaptureError;
 #[repr(C, align(8))]
 struct AlignedBytes<const N: usize>([u8; N]);
 
-static EBPF_ELF_ALIGNED: &AlignedBytes<{ include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")).len() }> =
-    &AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")));
+static EBPF_ELF_ALIGNED: &AlignedBytes<
+    { include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")).len() },
+> = &AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")));
 static EBPF_ELF: &[u8] = &EBPF_ELF_ALIGNED.0;
 
 // ---------------------------------------------------------------------------
@@ -80,8 +82,10 @@ impl EbpfCapture {
         let stats = Arc::clone(&self.stats);
 
         tokio::spawn(async move {
-            if let Err(e) = run_ebpf_capture(event_tx, cmd_rx, is_running.clone(), packet_counter, stats).await {
-                eprintln!("Fatal: {}", e);
+            if let Err(e) =
+                run_ebpf_capture(event_tx, cmd_rx, is_running.clone(), packet_counter, stats).await
+            {
+                error!(error = %e, "fatal eBPF capture error");
                 is_running.store(false, Ordering::SeqCst);
                 std::process::exit(1);
             }
@@ -100,27 +104,41 @@ impl EbpfCapture {
     }
 
     pub async fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
-        let tx = self.command_tx.lock().unwrap().clone()
+        let tx = self
+            .command_tx
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or_else(|| CaptureError::InvalidState("Capture is not running".to_string()))?;
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(EbpfCommand::Attach {
             interface: name.to_string(),
             reply: reply_tx,
-        }).await.map_err(|_| CaptureError::Other("Failed to send attach command".to_string()))?;
-        reply_rx.await
+        })
+        .await
+        .map_err(|_| CaptureError::Other("Failed to send attach command".to_string()))?;
+        reply_rx
+            .await
             .map_err(|_| CaptureError::Other("Failed to receive attach reply".to_string()))?
             .map_err(|msg| classify_ebpf_error(&msg))
     }
 
     pub async fn detach_interface(&self, name: &str) -> Result<(), CaptureError> {
-        let tx = self.command_tx.lock().unwrap().clone()
+        let tx = self
+            .command_tx
+            .lock()
+            .unwrap()
+            .clone()
             .ok_or_else(|| CaptureError::InvalidState("Capture is not running".to_string()))?;
         let (reply_tx, reply_rx) = oneshot::channel();
         tx.send(EbpfCommand::Detach {
             interface: name.to_string(),
             reply: reply_tx,
-        }).await.map_err(|_| CaptureError::Other("Failed to send detach command".to_string()))?;
-        reply_rx.await
+        })
+        .await
+        .map_err(|_| CaptureError::Other("Failed to send detach command".to_string()))?;
+        reply_rx
+            .await
             .map_err(|_| CaptureError::Other("Failed to receive detach reply".to_string()))?
             .map_err(|msg| classify_ebpf_error(&msg))
     }
@@ -179,18 +197,21 @@ struct PendingPacket {
 // XDP アタッチヘルパー
 // ---------------------------------------------------------------------------
 
-fn attach_xdp(
-    program: &mut Xdp,
-    iface: &str,
-) -> Result<XdpLinkId, String> {
+fn attach_xdp(program: &mut Xdp, iface: &str) -> Result<XdpLinkId, String> {
     program
         .attach(iface, XdpFlags::DRV_MODE)
         .or_else(|_| {
-            eprintln!("{}: DRV_MODE failed, falling back to SKB_MODE", iface);
+            warn!(
+                interface = iface,
+                "DRV_MODE failed, falling back to SKB_MODE"
+            );
             program.attach(iface, XdpFlags::SKB_MODE)
         })
         .or_else(|_| {
-            eprintln!("{}: SKB_MODE failed, falling back to default", iface);
+            warn!(
+                interface = iface,
+                "SKB_MODE failed, falling back to default mode"
+            );
             program.attach(iface, XdpFlags::default())
         })
         .map_err(|e| format!("Failed to attach XDP to {}: {}", iface, e))
@@ -207,9 +228,7 @@ async fn run_ebpf_capture(
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
 ) -> Result<(), CaptureError> {
-    let resolver = Arc::new(
-        DropReasonResolver::new().map_err(|e| CaptureError::Other(e))?,
-    );
+    let resolver = Arc::new(DropReasonResolver::new().map_err(|e| CaptureError::Other(e))?);
 
     let mut ebpf = EbpfLoader::new()
         .btf(Btf::from_sys_fs().ok().as_ref())
@@ -233,7 +252,9 @@ async fn run_ebpf_capture(
     // kfree_skb トレースポイントのロード・アタッチ
     let tp: &mut TracePoint = ebpf
         .program_mut("scrop_kfree_skb")
-        .ok_or_else(|| CaptureError::EbpfLoadFailed("tracepoint 'scrop_kfree_skb' not found".into()))?
+        .ok_or_else(|| {
+            CaptureError::EbpfLoadFailed("tracepoint 'scrop_kfree_skb' not found".into())
+        })?
         .try_into()
         .map_err(|e: aya::programs::ProgramError| CaptureError::EbpfLoadFailed(e.to_string()))?;
 
@@ -243,7 +264,7 @@ async fn run_ebpf_capture(
     tp.attach("skb", "kfree_skb")
         .map_err(|e| CaptureError::EbpfLoadFailed(format!("tracepoint attach: {}", e)))?;
 
-    eprintln!("kfree_skb tracepoint attached");
+    info!("kfree_skb tracepoint attached");
 
     // Perf イベントのセットアップ
     let mut perf_array: AsyncPerfEventArray<_> = ebpf
@@ -260,9 +281,12 @@ async fn run_ebpf_capture(
 
     // CPUごとにリーダーを起動 → チャネルに送信
     for cpu_id in cpus {
-        let mut buf = perf_array
-            .open(cpu_id, None)
-            .map_err(|e| CaptureError::Other(format!("Failed to open perf buffer for CPU {}: {}", cpu_id, e)))?;
+        let mut buf = perf_array.open(cpu_id, None).map_err(|e| {
+            CaptureError::Other(format!(
+                "Failed to open perf buffer for CPU {}: {}",
+                cpu_id, e
+            ))
+        })?;
 
         let is_running = Arc::clone(&is_running);
         let packet_counter = Arc::clone(&packet_counter);
@@ -277,7 +301,7 @@ async fn run_ebpf_capture(
                 let events = match buf.read_events(&mut buffers).await {
                     Ok(events) => events,
                     Err(e) => {
-                        eprintln!("Error reading perf events (CPU {}): {}", cpu_id, e);
+                        warn!(cpu_id, error = %e, "error reading perf events");
                         continue;
                     }
                 };
@@ -288,8 +312,9 @@ async fn run_ebpf_capture(
                         continue;
                     }
 
-                    let event: PacketEvent =
-                        unsafe { std::ptr::read_unaligned(event_buf.as_ptr() as *const PacketEvent) };
+                    let event: PacketEvent = unsafe {
+                        std::ptr::read_unaligned(event_buf.as_ptr() as *const PacketEvent)
+                    };
 
                     let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
                     let _ = tx.send((event, counter)).await;
@@ -392,7 +417,7 @@ async fn run_ebpf_capture(
 
     // ebpfがdropされるとXDPプログラム・トレースポイントは自動的にデタッチされる
     let iface_names: Vec<&str> = attached.keys().map(|s| s.as_str()).collect();
-    eprintln!("XDP program and tracepoint detached from {:?}", iface_names);
+    info!(interfaces = ?iface_names, "XDP program and tracepoint detached");
     Ok(())
 }
 
@@ -405,8 +430,8 @@ fn handle_attach(
         return Ok(());
     }
 
-    let ifindex = get_ifindex(interface)
-        .ok_or_else(|| format!("Interface {} not found", interface))?;
+    let ifindex =
+        get_ifindex(interface).ok_or_else(|| format!("Interface {} not found", interface))?;
 
     let program: &mut Xdp = ebpf
         .program_mut("scrop_xdp")
@@ -415,7 +440,7 @@ fn handle_attach(
         .map_err(|e: aya::programs::ProgramError| e.to_string())?;
 
     let link_id = attach_xdp(program, interface)?;
-    eprintln!("XDP program attached to {}", interface);
+    info!(interface, "XDP program attached");
 
     // MONITORED_IFS に ifindex を登録
     let mut monitored_ifs: AyaHashMap<_, u32, u32> = AyaHashMap::try_from(
@@ -427,7 +452,7 @@ fn handle_attach(
     monitored_ifs
         .insert(&ifindex, &1, 0)
         .map_err(|e| format!("MONITORED_IFS insert: {}", e))?;
-    eprintln!("Registered ifindex {} ({}) in MONITORED_IFS", ifindex, interface);
+    info!(ifindex, interface, "registered ifindex in MONITORED_IFS");
 
     attached.insert(interface.to_string(), (link_id, ifindex));
     Ok(())
@@ -438,7 +463,8 @@ fn handle_detach(
     interface: &str,
     attached: &mut HashMap<String, (XdpLinkId, u32)>,
 ) -> Result<(), String> {
-    let (link_id, ifindex) = attached.remove(interface)
+    let (link_id, ifindex) = attached
+        .remove(interface)
         .ok_or_else(|| format!("Interface {} is not attached", interface))?;
 
     let program: &mut Xdp = ebpf
@@ -447,10 +473,11 @@ fn handle_detach(
         .try_into()
         .map_err(|e: aya::programs::ProgramError| e.to_string())?;
 
-    program.detach(link_id)
+    program
+        .detach(link_id)
         .map_err(|e| format!("Failed to detach XDP from {}: {}", interface, e))?;
 
-    eprintln!("XDP program detached from {}", interface);
+    info!(interface, "XDP program detached");
 
     // MONITORED_IFS から ifindex を削除
     let mut monitored_ifs: AyaHashMap<_, u32, u32> = AyaHashMap::try_from(
@@ -460,7 +487,7 @@ fn handle_detach(
     .map_err(|e: aya::maps::MapError| format!("MONITORED_IFS map: {}", e))?;
 
     let _ = monitored_ifs.remove(&ifindex);
-    eprintln!("Removed ifindex {} ({}) from MONITORED_IFS", ifindex, interface);
+    info!(ifindex, interface, "removed ifindex from MONITORED_IFS");
 
     Ok(())
 }
@@ -475,7 +502,12 @@ fn update_stats(stats: &std::sync::Mutex<CaptureStats>, result: &PacketResult) {
     }
 }
 
-fn convert_event(event: &PacketEvent, counter: u64, result: PacketResult, reason: Option<String>) -> CapturedPacket {
+fn convert_event(
+    event: &PacketEvent,
+    counter: u64,
+    result: PacketResult,
+    reason: Option<String>,
+) -> CapturedPacket {
     use rand::Rng;
     let mut rng = rand::rng();
 
@@ -516,8 +548,5 @@ fn convert_event(event: &PacketEvent, counter: u64, result: PacketResult, reason
         reason,
     };
 
-    CapturedPacket {
-        packet,
-        result,
-    }
+    CapturedPacket { packet, result }
 }

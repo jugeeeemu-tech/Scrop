@@ -3,12 +3,16 @@ mod ws;
 
 use std::sync::Arc;
 
-use axum::http::{StatusCode, Uri, header};
+use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
 use rust_embed::Embed;
+use tracing::{info, Level};
+use tracing_subscriber::filter::{filter_fn, LevelFilter};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{fmt, EnvFilter};
 
 use scrop_capture::AppState;
 
@@ -26,6 +30,24 @@ struct Cli {
     /// Port to listen on
     #[arg(long, default_value_t = 3000)]
     port: u16,
+}
+
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let _ = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_filter(filter_fn(|metadata| *metadata.level() <= Level::INFO)),
+        )
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(LevelFilter::WARN),
+        )
+        .try_init();
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
@@ -56,11 +78,13 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    init_tracing();
+
     let cli = Cli::parse();
 
     #[cfg(feature = "ebpf")]
     if let Err(e) = scrop_capture::check_permissions() {
-        eprintln!("Error: {}", e);
+        tracing::error!(error = %e, "permission check failed");
         std::process::exit(1);
     }
 
@@ -88,13 +112,11 @@ async fn main() {
         .with_state(state);
 
     let addr = format!("{}:{}", cli.host, cli.port);
-    eprintln!("Scrop server listening on http://{}", addr);
+    info!(addr = %addr, "scrop server listening");
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("Failed to bind address");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server error");
+    axum::serve(listener, app).await.expect("Server error");
 }
