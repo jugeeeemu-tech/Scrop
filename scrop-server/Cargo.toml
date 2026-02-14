@@ -23,6 +23,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+tokio-tungstenite = "0.27"
+futures-util = "0.3"
 
 [features]
 default = ["ebpf"]
