@@ -3346,7 +3346,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scrop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "scrop-capture",
  "serde",
@@ -3361,7 +3361,7 @@ dependencies = [
 
 [[package]]
 name = "scrop-capture"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aya",
  "bytes",
@@ -3383,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "scrop-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "clap",

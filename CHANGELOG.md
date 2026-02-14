@@ -1,6 +1,27 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.1] - 2026-02-14
+
+### 🐛 Bug Fixes
+
+- *(port-layer)* Avoid left-edge stream residue
+- *(port-layer)* Clear stream state for removed ports
+
+### 🚜 Refactor
+
+- *(logging)* Migrate rust logs to tracing
+
+### 📚 Documentation
+
+- *(readme)* Add project setup and usage guide
+- *(readme)* Simplify to release usage and constraints
+- *(readme)* Add GitHub download command for release
+
+### 🧪 Testing
+
+- *(e2e)* Add port delete stream residue check
+- *(e2e)* Wait for firewall drop modal details
 ## [0.1.0] - 2026-02-13
 
 ### 🚀 Features
@@ -105,6 +126,7 @@ All notable changes to this project will be documented in this file.
 - Update React version in CLAUDE.md
 - Add test commands to CLAUDE.md
 - Add E2E_PORT usage to test commands
+- *(changelog)* Add v0.1.0 release notes
 
 ### ⚡ Performance
 
