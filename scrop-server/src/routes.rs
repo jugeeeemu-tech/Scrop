@@ -5,8 +5,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde::Serialize;
 
-use scrop_capture::{AppState, CaptureError};
 use scrop_capture::types::CaptureStats;
+use scrop_capture::{AppState, CaptureError};
 
 #[cfg(not(feature = "ebpf"))]
 use serde::Deserialize;
@@ -43,13 +43,18 @@ impl IntoResponse for ApiError {
 impl From<CaptureError> for ApiError {
     fn from(err: CaptureError) -> Self {
         let status = match &err {
-            CaptureError::InterfaceNotFound(_) | CaptureError::InvalidState(_) => StatusCode::BAD_REQUEST,
+            CaptureError::InterfaceNotFound(_) | CaptureError::InvalidState(_) => {
+                StatusCode::BAD_REQUEST
+            }
             CaptureError::PermissionDenied(_) => StatusCode::FORBIDDEN,
             #[cfg(feature = "ebpf")]
             CaptureError::EbpfLoadFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
             CaptureError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        Self { status, error: err.to_string() }
+        Self {
+            status,
+            error: err.to_string(),
+        }
     }
 }
 
@@ -174,7 +179,12 @@ pub async fn update_mock_config(
 ) -> Result<Json<MockConfigResponse>, ApiError> {
     let capture = state.capture.lock().await;
     let config = capture
-        .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate, req.batch_size)
+        .update_mock_config(
+            req.interval_ms,
+            req.nic_drop_rate,
+            req.fw_drop_rate,
+            req.batch_size,
+        )
         .map_err(ApiError::from)?;
     Ok(Json(MockConfigResponse {
         interval_ms: config.interval_ms,

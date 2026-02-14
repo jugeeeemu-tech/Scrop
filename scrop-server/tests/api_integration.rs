@@ -56,12 +56,12 @@ mod scrop_server_routes {
     use std::sync::Arc;
 
     use axum::extract::{Path, State};
-    use axum::response::{IntoResponse, Json, Response};
     use axum::http::StatusCode;
+    use axum::response::{IntoResponse, Json, Response};
     use serde::Serialize;
 
-    use scrop_capture::{AppState, CaptureError};
     use scrop_capture::types::CaptureStats;
+    use scrop_capture::{AppState, CaptureError};
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -95,13 +95,18 @@ mod scrop_server_routes {
     impl From<CaptureError> for ApiError {
         fn from(err: CaptureError) -> Self {
             let status = match &err {
-                CaptureError::InterfaceNotFound(_) | CaptureError::InvalidState(_) => StatusCode::BAD_REQUEST,
+                CaptureError::InterfaceNotFound(_) | CaptureError::InvalidState(_) => {
+                    StatusCode::BAD_REQUEST
+                }
                 CaptureError::PermissionDenied(_) => StatusCode::FORBIDDEN,
                 #[cfg(feature = "ebpf")]
                 CaptureError::EbpfLoadFailed(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 CaptureError::Other(_) => StatusCode::INTERNAL_SERVER_ERROR,
             };
-            Self { status, error: err.to_string() }
+            Self {
+                status,
+                error: err.to_string(),
+            }
         }
     }
 
@@ -222,7 +227,12 @@ mod scrop_server_routes {
     ) -> Result<Json<MockConfigResponse>, ApiError> {
         let capture = state.capture.lock().await;
         let config = capture
-            .update_mock_config(req.interval_ms, req.nic_drop_rate, req.fw_drop_rate, req.batch_size)
+            .update_mock_config(
+                req.interval_ms,
+                req.nic_drop_rate,
+                req.fw_drop_rate,
+                req.batch_size,
+            )
             .map_err(ApiError::from)?;
         Ok(Json(MockConfigResponse {
             interval_ms: config.interval_ms,
@@ -367,9 +377,7 @@ async fn detach_interface_after_attach_returns_200() {
             post(scrop_server_routes::detach_interface),
         );
 
-    let app = Router::new()
-        .nest("/api", api_routes)
-        .with_state(state);
+    let app = Router::new().nest("/api", api_routes).with_state(state);
 
     // Attach first
     let response = app
@@ -415,9 +423,7 @@ async fn start_then_status_shows_capturing() {
         )
         .route("/capture/stop", post(scrop_server_routes::stop_capture));
 
-    let app = Router::new()
-        .nest("/api", api_routes)
-        .with_state(state);
+    let app = Router::new().nest("/api", api_routes).with_state(state);
 
     // Start capture
     let response = app
@@ -485,8 +491,7 @@ fn build_stateful_test_app() -> (Router, Arc<AppState>) {
         )
         .route(
             "/mock/config",
-            get(scrop_server_routes::get_mock_config)
-                .put(scrop_server_routes::update_mock_config),
+            get(scrop_server_routes::get_mock_config).put(scrop_server_routes::update_mock_config),
         );
 
     let app = Router::new()
@@ -511,12 +516,7 @@ async fn post_request(app: &Router, uri: &str) -> axum::http::Response<Body> {
 
 async fn get_request(app: &Router, uri: &str) -> axum::http::Response<Body> {
     app.clone()
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap()
 }
@@ -566,7 +566,10 @@ async fn attach_then_start_produces_packets() {
 
     // Cleanup
     let _ = post_request(&app, "/api/capture/stop").await;
-    assert!(found_packets, "Expected packets to be generated after attach + start");
+    assert!(
+        found_packets,
+        "Expected packets to be generated after attach + start"
+    );
 }
 
 #[tokio::test]
@@ -619,7 +622,10 @@ async fn detach_all_stops_packet_generation() {
 
     // Cleanup
     let _ = post_request(&app, "/api/capture/stop").await;
-    assert_eq!(total, 0, "Expected no packets after detaching all interfaces");
+    assert_eq!(
+        total, 0,
+        "Expected no packets after detaching all interfaces"
+    );
 }
 
 #[tokio::test]
@@ -712,8 +718,7 @@ async fn put_mock_config_full_update() {
 async fn put_mock_config_validation_interval_zero() {
     let (app, _state) = build_stateful_test_app();
 
-    let response =
-        put_json_request(&app, "/api/mock/config", r#"{"intervalMs": 0}"#).await;
+    let response = put_json_request(&app, "/api/mock/config", r#"{"intervalMs": 0}"#).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -721,8 +726,7 @@ async fn put_mock_config_validation_interval_zero() {
 async fn put_mock_config_validation_rate_out_of_range() {
     let (app, _state) = build_stateful_test_app();
 
-    let response =
-        put_json_request(&app, "/api/mock/config", r#"{"nicDropRate": 1.5}"#).await;
+    let response = put_json_request(&app, "/api/mock/config", r#"{"nicDropRate": 1.5}"#).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -759,7 +763,6 @@ async fn put_mock_config_batch_size_update() {
 async fn put_mock_config_validation_batch_size_zero() {
     let (app, _state) = build_stateful_test_app();
 
-    let response =
-        put_json_request(&app, "/api/mock/config", r#"{"batchSize": 0}"#).await;
+    let response = put_json_request(&app, "/api/mock/config", r#"{"batchSize": 0}"#).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
