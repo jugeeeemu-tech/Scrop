@@ -13,7 +13,10 @@ use aya::{Btf, EbpfLoader};
 use bytes::BytesMut;
 use tracing::{error, info, warn};
 
-use crate::types::{AnimatingPacket, CaptureStats, CapturedPacket, PacketResult, Protocol};
+use crate::types::{
+    build_packet_id, generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket,
+    PacketResult, Protocol,
+};
 use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS};
 
 use crate::drop_reason::DropReasonResolver;
@@ -80,10 +83,18 @@ impl EbpfCapture {
         let is_running = Arc::clone(&self.is_running);
         let packet_counter = Arc::clone(&self.packet_counter);
         let stats = Arc::clone(&self.stats);
+        let session_id = generate_session_id();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                run_ebpf_capture(event_tx, cmd_rx, is_running.clone(), packet_counter, stats).await
+            if let Err(e) = run_ebpf_capture(
+                event_tx,
+                cmd_rx,
+                is_running.clone(),
+                packet_counter,
+                stats,
+                session_id,
+            )
+            .await
             {
                 error!(error = %e, "fatal eBPF capture error");
                 is_running.store(false, Ordering::SeqCst);
@@ -227,6 +238,7 @@ async fn run_ebpf_capture(
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
+    session_id: String,
 ) -> Result<(), CaptureError> {
     let resolver = Arc::new(DropReasonResolver::new().map_err(|e| CaptureError::Other(e))?);
 
@@ -331,6 +343,7 @@ async fn run_ebpf_capture(
     let correlation_is_running = Arc::clone(&is_running);
     let correlation_stats = Arc::clone(&stats);
     let correlation_resolver = Arc::clone(&resolver);
+    let correlation_session_id = session_id;
 
     tokio::spawn(async move {
         let mut pending: HashMap<FiveTuple, PendingPacket> = HashMap::new();
@@ -358,7 +371,13 @@ async fn run_ebpf_capture(
 
                                 if let Some(p) = pending.remove(&tuple) {
                                     // XDP で見たパケットがドロップされた
-                                    let captured = convert_event(&p.event, p.counter, result, Some(reason));
+                                    let captured = convert_event(
+                                        &p.event,
+                                        &correlation_session_id,
+                                        p.counter,
+                                        result,
+                                        Some(reason),
+                                    );
                                     update_stats(&correlation_stats, &captured.result);
                                     let _ = correlation_event_tx.send(captured);
                                 }
@@ -383,7 +402,13 @@ async fn run_ebpf_capture(
 
                     for key in expired {
                         if let Some(p) = pending.remove(&key) {
-                            let captured = convert_event(&p.event, p.counter, PacketResult::Delivered, None);
+                            let captured = convert_event(
+                                &p.event,
+                                &correlation_session_id,
+                                p.counter,
+                                PacketResult::Delivered,
+                                None,
+                            );
                             update_stats(&correlation_stats, &captured.result);
                             let _ = correlation_event_tx.send(captured);
                         }
@@ -504,27 +529,12 @@ fn update_stats(stats: &std::sync::Mutex<CaptureStats>, result: &PacketResult) {
 
 fn convert_event(
     event: &PacketEvent,
+    session_id: &str,
     counter: u64,
     result: PacketResult,
     reason: Option<String>,
 ) -> CapturedPacket {
-    use rand::Rng;
-    let mut rng = rand::rng();
-
-    let id = format!(
-        "pkt-{}-{}",
-        counter,
-        (0..6)
-            .map(|_| {
-                let idx: u8 = rng.random_range(0..36);
-                if idx < 10 {
-                    (b'0' + idx) as char
-                } else {
-                    (b'a' + idx - 10) as char
-                }
-            })
-            .collect::<String>()
-    );
+    let id = build_packet_id(session_id, counter);
 
     let protocol = match event.protocol {
         6 => Protocol::Tcp,

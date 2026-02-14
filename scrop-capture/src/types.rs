@@ -36,6 +36,27 @@ impl Protocol {
 
 /// モック用のwell-knownポート一覧
 const WELL_KNOWN_PORTS: &[u16] = &[80, 443, 22, 8080, 53, 25, 21];
+const SESSION_ID_LENGTH: usize = 6;
+
+pub fn generate_session_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::rng();
+
+    (0..SESSION_ID_LENGTH)
+        .map(|_| {
+            let idx: u8 = rng.random_range(0..36);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'a' + idx - 10) as char
+            }
+        })
+        .collect()
+}
+
+pub fn build_packet_id(session_id: &str, counter: u64) -> String {
+    format!("pkt-{}-{}", session_id, counter)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,24 +75,11 @@ pub struct AnimatingPacket {
 }
 
 impl AnimatingPacket {
-    pub fn generate(counter: u64) -> Self {
+    pub fn generate(session_id: &str, counter: u64) -> Self {
         use rand::Rng;
         let mut rng = rand::rng();
 
-        let id = format!(
-            "pkt-{}-{}",
-            counter,
-            (0..6)
-                .map(|_| {
-                    let idx = rng.random_range(0..36);
-                    if idx < 10 {
-                        (b'0' + idx) as char
-                    } else {
-                        (b'a' + idx - 10) as char
-                    }
-                })
-                .collect::<String>()
-        );
+        let id = build_packet_id(session_id, counter);
 
         let protocol = Protocol::random();
         // well-knownポートからランダム選択
@@ -113,13 +121,13 @@ mod tests {
 
     #[test]
     fn generate_produces_valid_fields() {
-        let pkt = AnimatingPacket::generate(0);
+        let pkt = AnimatingPacket::generate("abc123", 0);
         assert!(pkt.size >= 64 && pkt.size < 1564);
         assert!(pkt.src_port >= 1024 && pkt.src_port < 65535);
         assert!(WELL_KNOWN_PORTS.contains(&pkt.dest_port));
         assert!(pkt.source.starts_with("192.168.1."));
         assert!(pkt.destination.starts_with("10.0.0."));
-        assert!(pkt.id.starts_with("pkt-0-"));
+        assert_eq!(pkt.id, "pkt-abc123-0");
         assert!(pkt.target_port.is_none());
         assert!(pkt.reason.is_none());
     }
@@ -127,15 +135,16 @@ mod tests {
     #[test]
     fn generate_produces_unique_ids() {
         let mut ids = HashSet::new();
+        let session_id = "abc123";
         for i in 0..100 {
-            let pkt = AnimatingPacket::generate(i);
+            let pkt = AnimatingPacket::generate(session_id, i);
             assert!(ids.insert(pkt.id), "Duplicate ID detected");
         }
     }
 
     #[test]
     fn with_reason_sets_reason() {
-        let pkt = AnimatingPacket::generate(0).with_reason("test reason");
+        let pkt = AnimatingPacket::generate("abc123", 0).with_reason("test reason");
         assert_eq!(pkt.reason, Some("test reason".to_string()));
     }
 
@@ -168,7 +177,7 @@ mod tests {
 
     #[test]
     fn animating_packet_serializes_to_camel_case() {
-        let pkt = AnimatingPacket::generate(42);
+        let pkt = AnimatingPacket::generate("abc123", 42);
         let json = serde_json::to_string(&pkt).unwrap();
         assert!(json.contains("\"srcPort\""));
         assert!(json.contains("\"destPort\""));
@@ -179,9 +188,24 @@ mod tests {
 
     #[test]
     fn animating_packet_with_reason_includes_reason_in_json() {
-        let pkt = AnimatingPacket::generate(0).with_reason("blocked");
+        let pkt = AnimatingPacket::generate("abc123", 0).with_reason("blocked");
         let json = serde_json::to_string(&pkt).unwrap();
         assert!(json.contains("\"reason\":\"blocked\""));
+    }
+
+    #[test]
+    fn generate_session_id_is_base36_with_fixed_length() {
+        let session_id = generate_session_id();
+        assert_eq!(session_id.len(), SESSION_ID_LENGTH);
+        assert!(session_id
+            .chars()
+            .all(|c| c.is_ascii_digit() || c.is_ascii_lowercase()));
+    }
+
+    #[test]
+    fn build_packet_id_uses_expected_format() {
+        let id = build_packet_id("a1b2c3", 42);
+        assert_eq!(id, "pkt-a1b2c3-42");
     }
 
     #[test]

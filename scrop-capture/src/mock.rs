@@ -4,7 +4,9 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
-use crate::types::{AnimatingPacket, CapturedPacket, CaptureStats, PacketResult};
+use crate::types::{
+    generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket, PacketResult,
+};
 use crate::CaptureError;
 
 pub const AVAILABLE_INTERFACES: &[&str] = &["eth0", "lo", "wlan0", "docker0"];
@@ -103,7 +105,10 @@ impl MockCapture {
 
     pub fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
         if !AVAILABLE_INTERFACES.contains(&name) {
-            return Err(CaptureError::InterfaceNotFound(format!("Interface {} not found", name)));
+            return Err(CaptureError::InterfaceNotFound(format!(
+                "Interface {} not found",
+                name
+            )));
         }
         self.attached_interfaces
             .lock()
@@ -114,7 +119,10 @@ impl MockCapture {
 
     pub fn detach_interface(&self, name: &str) -> Result<(), CaptureError> {
         if !self.attached_interfaces.lock().unwrap().remove(name) {
-            return Err(CaptureError::InvalidState(format!("Interface {} is not attached", name)));
+            return Err(CaptureError::InvalidState(format!(
+                "Interface {} is not attached",
+                name
+            )));
         }
         Ok(())
     }
@@ -145,12 +153,18 @@ impl MockCapture {
         let stats = Arc::clone(&self.stats);
         let attached_interfaces = Arc::clone(&self.attached_interfaces);
         let config = Arc::clone(&self.config);
+        let session_id = generate_session_id();
 
         tokio::spawn(async move {
             while is_running.load(Ordering::SeqCst) {
                 let (interval_ms, nic_drop_rate, fw_drop_rate, batch_size) = {
                     let cfg = config.lock().unwrap();
-                    (cfg.interval_ms, cfg.nic_drop_rate, cfg.fw_drop_rate, cfg.batch_size)
+                    (
+                        cfg.interval_ms,
+                        cfg.nic_drop_rate,
+                        cfg.fw_drop_rate,
+                        cfg.batch_size,
+                    )
                 };
 
                 // Skip packet generation if no interfaces are attached
@@ -161,7 +175,7 @@ impl MockCapture {
 
                 for _ in 0..batch_size {
                     let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
-                    let packet = AnimatingPacket::generate(counter);
+                    let packet = AnimatingPacket::generate(&session_id, counter);
 
                     // Determine result immediately
                     let random: f64 = rand::random();
@@ -209,6 +223,16 @@ impl MockCapture {
 mod tests {
     use super::*;
 
+    fn parse_packet_id(id: &str) -> (String, u64) {
+        let parts: Vec<&str> = id.split('-').collect();
+        assert_eq!(parts.len(), 3, "unexpected packet id format: {}", id);
+        assert_eq!(parts[0], "pkt");
+        let counter = parts[2]
+            .parse::<u64>()
+            .expect("packet counter should be valid u64");
+        (parts[1].to_string(), counter)
+    }
+
     #[test]
     fn new_creates_stopped_instance() {
         let mock = MockCapture::new();
@@ -246,11 +270,7 @@ mod tests {
         mock.start(tx);
 
         // Wait for at least one packet
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            rx.recv(),
-        )
-        .await;
+        let result = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
 
         mock.stop();
         assert!(result.is_ok(), "Timed out waiting for packet");
@@ -272,7 +292,11 @@ mod tests {
 
         mock.stop();
         let stats = mock.get_stats();
-        assert!(stats.total_packets >= 3, "Expected at least 3 packets, got {}", stats.total_packets);
+        assert!(
+            stats.total_packets >= 3,
+            "Expected at least 3 packets, got {}",
+            stats.total_packets
+        );
         assert_eq!(
             stats.total_packets,
             stats.nic_dropped + stats.fw_dropped + stats.delivered
@@ -309,7 +333,10 @@ mod tests {
 
         let result = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
         mock.stop();
-        assert!(result.is_err(), "Should not receive packets without attached interfaces");
+        assert!(
+            result.is_err(),
+            "Should not receive packets without attached interfaces"
+        );
         assert_eq!(mock.get_stats().total_packets, 0);
     }
 
@@ -366,7 +393,10 @@ mod tests {
 
         // Wait for at least one packet
         let result = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
-        assert!(result.is_ok(), "Should receive packets with attached interface");
+        assert!(
+            result.is_ok(),
+            "Should receive packets with attached interface"
+        );
 
         // Detach all interfaces
         mock.detach_interface("eth0").unwrap();
@@ -377,7 +407,10 @@ mod tests {
         // Wait and verify no new packets
         let result = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await;
         mock.stop();
-        assert!(result.is_err(), "Should not receive packets after detaching all interfaces");
+        assert!(
+            result.is_err(),
+            "Should not receive packets after detaching all interfaces"
+        );
         assert_eq!(mock.get_stats().total_packets, 0);
     }
 
@@ -411,7 +444,9 @@ mod tests {
         assert!((config.fw_drop_rate - 0.15).abs() < f64::EPSILON);
 
         // Update only drop rates
-        let config = mock.update_config(None, Some(0.3), Some(0.2), None).unwrap();
+        let config = mock
+            .update_config(None, Some(0.3), Some(0.2), None)
+            .unwrap();
         assert_eq!(config.interval_ms, 100);
         assert!((config.nic_drop_rate - 0.3).abs() < f64::EPSILON);
         assert!((config.fw_drop_rate - 0.2).abs() < f64::EPSILON);
@@ -490,6 +525,77 @@ mod tests {
         // Should receive packets quickly with 50ms interval
         let result = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
         mock.stop();
-        assert!(result.is_ok(), "Should receive packet within 1s with 50ms interval");
+        assert!(
+            result.is_ok(),
+            "Should receive packet within 1s with 50ms interval"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_stop_start_rotates_session_id_without_reset() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+        mock.update_config(Some(50), None, None, None).unwrap();
+
+        let (tx1, mut rx1) = broadcast::channel(16);
+        mock.start(tx1);
+        let first = tokio::time::timeout(Duration::from_secs(2), rx1.recv())
+            .await
+            .expect("first packet timeout")
+            .expect("first packet receive failed");
+        mock.stop();
+        sleep(Duration::from_millis(100)).await;
+
+        let (tx2, mut rx2) = broadcast::channel(16);
+        mock.start(tx2);
+        let second = tokio::time::timeout(Duration::from_secs(2), rx2.recv())
+            .await
+            .expect("second packet timeout")
+            .expect("second packet receive failed");
+        mock.stop();
+
+        let (first_session, first_counter) = parse_packet_id(&first.packet.id);
+        let (second_session, second_counter) = parse_packet_id(&second.packet.id);
+
+        assert_ne!(
+            first_session, second_session,
+            "session_id should change on each start"
+        );
+        assert!(
+            second_counter > first_counter,
+            "counter should continue without reset"
+        );
+    }
+
+    #[tokio::test]
+    async fn reset_then_restart_restarts_counter_from_zero() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+        mock.update_config(Some(50), None, None, None).unwrap();
+
+        let (tx1, mut rx1) = broadcast::channel(16);
+        mock.start(tx1);
+        let _ = tokio::time::timeout(Duration::from_secs(2), rx1.recv())
+            .await
+            .expect("first run packet timeout")
+            .expect("first run packet receive failed");
+        mock.stop();
+        sleep(Duration::from_millis(100)).await;
+
+        mock.reset();
+
+        let (tx2, mut rx2) = broadcast::channel(16);
+        mock.start(tx2);
+        let second = tokio::time::timeout(Duration::from_secs(2), rx2.recv())
+            .await
+            .expect("second run packet timeout")
+            .expect("second run packet receive failed");
+        mock.stop();
+
+        let (_, second_counter) = parse_packet_id(&second.packet.id);
+        assert_eq!(
+            second_counter, 0,
+            "counter should restart from zero after reset"
+        );
     }
 }
