@@ -1,5 +1,6 @@
 mod routes;
 mod ws;
+mod ws_proto;
 
 use std::sync::Arc;
 

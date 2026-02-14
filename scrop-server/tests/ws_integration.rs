@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::routing::get;
 use axum::Router;
 use futures_util::StreamExt;
-use serde_json::Value;
+use prost::Message as _;
 use tokio_tungstenite::tungstenite::Message;
 
 use scrop_capture::types::{AnimatingPacket, CapturedPacket, PacketResult, Protocol};
@@ -12,6 +12,8 @@ use scrop_capture::AppState;
 
 #[path = "../src/ws.rs"]
 mod ws;
+#[path = "../src/ws_proto.rs"]
+mod ws_proto;
 
 fn sample_captured_packet(id: &str) -> CapturedPacket {
     CapturedPacket {
@@ -42,7 +44,7 @@ async fn send_batch_when_subscribed(state: &Arc<AppState>, batch: Vec<CapturedPa
 }
 
 #[tokio::test]
-async fn websocket_streams_batches_as_json_array() {
+async fn websocket_streams_batches_as_binary_protobuf() {
     let state = Arc::new(AppState::new());
     let app = Router::new()
         .route("/ws", get(ws::ws_handler))
@@ -74,16 +76,21 @@ async fn websocket_streams_batches_as_json_array() {
         .expect("websocket stream ended")
         .expect("websocket read error");
 
-    let text = match next {
-        Message::Text(text) => text,
-        other => panic!("expected websocket text message, got {:?}", other),
+    let bytes = match next {
+        Message::Binary(bytes) => bytes,
+        other => panic!("expected websocket binary message, got {:?}", other),
     };
 
-    let json: Value = serde_json::from_str(&text).expect("parse websocket json");
-    let array = json.as_array().expect("payload should be a JSON array");
-    assert_eq!(array.len(), 2);
-    assert_eq!(array[0]["packet"]["id"], "pkt-test-1");
-    assert_eq!(array[0]["result"], "delivered");
+    let envelope = ws_proto::pb::PacketBatchEnvelope::decode(bytes).expect("decode protobuf");
+    assert_eq!(envelope.schema_version, ws_proto::SCHEMA_VERSION);
+    assert_eq!(envelope.packets.len(), 2);
+
+    let first = envelope.packets.first().expect("first packet");
+    let packet = first.packet.as_ref().expect("captured packet payload");
+    assert_eq!(packet.id, "pkt-test-1");
+
+    let result = ws_proto::pb::PacketResult::try_from(first.result).expect("packet result enum");
+    assert_eq!(result, ws_proto::pb::PacketResult::Delivered);
 
     server.abort();
 }

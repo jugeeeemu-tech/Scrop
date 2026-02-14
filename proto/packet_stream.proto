@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package scrop.packet;
+
+message PacketBatchEnvelope {
+  uint32 schema_version = 1;
+  repeated CapturedPacket packets = 2;
+}
+
+message CapturedPacket {
+  AnimatingPacket packet = 1;
+  PacketResult result = 2;
+}
+
+message AnimatingPacket {
+  string id = 1;
+  Protocol protocol = 2;
+  uint32 size = 3;
+  string source = 4;
+  uint32 src_port = 5;
+  string destination = 6;
+  uint32 dest_port = 7;
+  optional uint32 target_port = 8;
+  double timestamp = 9;
+  optional string reason = 10;
+  optional double capture_mono_ns = 11;
+}
+
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_TCP = 1;
+  PROTOCOL_UDP = 2;
+}
+
+enum PacketResult {
+  PACKET_RESULT_UNSPECIFIED = 0;
+  PACKET_RESULT_DELIVERED = 1;
+  PACKET_RESULT_NIC_DROP = 2;
+  PACKET_RESULT_FW_DROP = 3;
+}

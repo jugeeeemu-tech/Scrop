@@ -3,9 +3,12 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
+use prost::Message as _;
 use tracing::warn;
 
 use scrop_capture::AppState;
+
+use crate::ws_proto::batch_to_envelope;
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -22,15 +25,11 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
             result = rx.recv() => {
                 match result {
                     Ok(batch) => {
-                        match serde_json::to_string(&batch) {
-                            Ok(json) => {
-                                if socket.send(Message::Text(json.into())).await.is_err() {
-                                    break; // Client disconnected
-                                }
-                            }
-                            Err(e) => {
-                                warn!(error = %e, "failed to serialize packet");
-                            }
+                        let envelope = batch_to_envelope(&batch);
+                        let payload = envelope.encode_to_vec();
+
+                        if socket.send(Message::Binary(payload.into())).await.is_err() {
+                            break; // Client disconnected
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
