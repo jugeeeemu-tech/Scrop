@@ -160,6 +160,14 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
         expect(status.stats.fwDropped).toBeGreaterThan(0);
       }).toPass({ timeout: 15000 });
 
+      // UIにもFWドロップが反映されるまで待つ
+      const fwBadge = page.getByTestId('drop-count-firewall');
+      await expect(async () => {
+        const fwPile = page.getByTestId('drop-pile-firewall');
+        await fwPile.scrollIntoViewIfNeeded();
+        await expect(fwBadge).toBeVisible();
+      }).toPass({ timeout: 15000 });
+
       // キャプチャを停止してUIを安定化
       await page.request.post('/api/capture/stop');
 
@@ -174,6 +182,9 @@ test.describe('ドロップパケット表示・エラーハンドリング', ()
 
       // ヘッダーに "Firewall Drops" が表示される
       await expect(overlay.getByText('Firewall Drops')).toBeVisible();
+
+      // モーダル明細の反映遅延を吸収
+      await page.waitForTimeout(5000);
 
       // パケット詳細が表示される（プロトコル名が含まれるパケット行）
       await expect(overlay.getByText(/TCP|UDP/).first()).toBeVisible();
