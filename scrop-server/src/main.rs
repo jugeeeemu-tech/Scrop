@@ -2,6 +2,8 @@ mod routes;
 mod ws;
 mod ws_proto;
 
+#[cfg(debug_assertions)]
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::http::{header, StatusCode, Uri};
@@ -9,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
+#[cfg(not(debug_assertions))]
 use rust_embed::Embed;
 use tracing::{info, Level};
 use tracing_subscriber::filter::{filter_fn, LevelFilter};
@@ -17,6 +20,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use scrop_capture::AppState;
 
+#[cfg(not(debug_assertions))]
 #[derive(Embed)]
 #[folder = "../dist/"]
 struct Assets;
@@ -55,19 +59,19 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
 
     // Try the exact path first
-    if let Some(content) = Assets::get(path) {
+    if let Some(content) = load_asset(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         return Response::builder()
             .header(header::CONTENT_TYPE, mime.as_ref())
-            .body(axum::body::Body::from(content.data.to_vec()))
+            .body(axum::body::Body::from(content))
             .unwrap();
     }
 
     // SPA fallback: serve index.html for unknown paths
-    if let Some(content) = Assets::get("index.html") {
+    if let Some(content) = load_asset("index.html") {
         return Response::builder()
             .header(header::CONTENT_TYPE, "text/html")
-            .body(axum::body::Body::from(content.data.to_vec()))
+            .body(axum::body::Body::from(content))
             .unwrap();
     }
 
@@ -75,6 +79,19 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
         .status(StatusCode::NOT_FOUND)
         .body(axum::body::Body::from("Not Found"))
         .unwrap()
+}
+
+#[cfg(not(debug_assertions))]
+fn load_asset(path: &str) -> Option<Vec<u8>> {
+    Assets::get(path).map(|content| content.data.into_owned())
+}
+
+#[cfg(debug_assertions)]
+fn load_asset(path: &str) -> Option<Vec<u8>> {
+    let asset_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dist")
+        .join(path);
+    std::fs::read(asset_path).ok()
 }
 
 #[tokio::main]
