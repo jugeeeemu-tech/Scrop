@@ -385,7 +385,9 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
   }
 
   // Delivered
-  const port = packet.targetPort ?? 0;
+  // Port config can change while packets are in-flight; resolve again at FW stage.
+  const port = resolveTargetPort(packet.destPort);
+  const packetForPort = packet.targetPort === port ? packet : { ...packet, targetPort: port };
   pushDeliveredTime(port, now);
   const activePorts = getActiveStreamPorts();
   const mergedSet = new Set([...store.streamingPorts, ...activePorts]);
@@ -408,7 +410,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
       },
       streamingPorts: updatedStreamingPorts,
     };
-    appendDeliveredPacket(port, packet);
+    appendDeliveredPacket(port, packetForPort);
   } else {
     // 通常: fwToPortPacketsに追加してアニメーション
     store = {
@@ -420,7 +422,7 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
         [port]: (store.deliveredCounterPerPort[port] || 0) + 1,
       },
       streamingPorts: updatedStreamingPorts,
-      fwToPortPackets: [...store.fwToPortPackets, packet],
+      fwToPortPackets: [...store.fwToPortPackets, packetForPort],
     };
   }
   emitChange();
@@ -575,9 +577,24 @@ export function syncPortConfig(ports: PortInfo[]): void {
     if (!currentKeys.has(numKey)) {
       delete newDeliveredPackets[numKey];
       delete newCounterPerPort[numKey];
+      delete recentDeliveredTimesPerPort[numKey];
+      delete pendingDelivered[numKey];
     }
   }
-  store = { ...store, deliveredPackets: newDeliveredPackets, deliveredCounterPerPort: newCounterPerPort };
+
+  // 削除されたポートのストリーム・アニメーションを即時に落とす
+  const nextStreamingPorts = store.streamingPorts.filter((port) => currentKeys.has(port));
+  const nextFwToPortPackets = store.fwToPortPackets.filter((packet) =>
+    currentKeys.has(packet.targetPort ?? ETC_PORT_KEY)
+  );
+
+  store = {
+    ...store,
+    deliveredPackets: newDeliveredPackets,
+    deliveredCounterPerPort: newCounterPerPort,
+    streamingPorts: nextStreamingPorts,
+    fwToPortPackets: nextFwToPortPackets,
+  };
   emitChange();
 
 }

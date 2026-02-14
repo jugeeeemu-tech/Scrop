@@ -1,7 +1,7 @@
 import { AnimatedPacket } from '../packet/AnimatedPacket';
 import { PacketStream } from '../packet/PacketStream';
 import { StreamFadeOut } from '../packet/StreamFadeOut';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PortInfo } from '../../types';
 import { ETC_PORT_KEY } from '../../constants';
 import { usePortLayerStore } from '../../hooks/usePortLayerStore';
@@ -15,6 +15,10 @@ interface PortAnimationZoneProps {
 
 export function PortAnimationZone({ ports, animationZoneRef, mailboxPositions }: PortAnimationZoneProps) {
   const { fwToPortPackets: animatingPackets, streamingPorts } = usePortLayerStore();
+  const currentPortKeys = useMemo(
+    () => new Set(ports.map((p) => (p.type === 'port' ? p.port : ETC_PORT_KEY))),
+    [ports]
+  );
 
   // Helper: ポートキーから配列インデックスへの逆変換 (Map で O(1) ルックアップ)
   const portKeyToIndexMap = new Map<number, number>();
@@ -29,13 +33,15 @@ export function PortAnimationZone({ ports, animationZoneRef, mailboxPositions }:
     const zone = animationZoneRef.current;
     if (zone) {
       const mailboxEl = document.querySelector(`[data-testid="${toMailboxTestId(portKey)}"]`) as HTMLElement | null;
-      if (mailboxEl) {
-        const zoneRect = zone.getBoundingClientRect();
-        const rect = mailboxEl.getBoundingClientRect();
-        const pos = rect.left + rect.width / 2 - zoneRect.left;
-        if (Number.isFinite(pos) && pos > 0) {
-          return pos;
-        }
+      if (!mailboxEl) {
+        // Port removal should clear stream immediately (no fade while target is absent).
+        return null;
+      }
+      const zoneRect = zone.getBoundingClientRect();
+      const rect = mailboxEl.getBoundingClientRect();
+      const pos = rect.left + rect.width / 2 - zoneRect.left;
+      if (Number.isFinite(pos) && pos > 0) {
+        return pos;
       }
     }
 
@@ -45,17 +51,22 @@ export function PortAnimationZone({ ports, animationZoneRef, mailboxPositions }:
     return typeof pos === 'number' && Number.isFinite(pos) && pos > 0 ? pos : null;
   };
 
-  // Track ports that need visible stream (active or fading out)
-  const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>([]);
-  const [prevStreamingPorts, setPrevStreamingPorts] = useState(streamingPorts);
+  // Track ports that need visible stream (active or fading out).
+  // Removed ports are dropped immediately to avoid residue after deletion.
+  const [visibleStreamPorts, setVisibleStreamPorts] = useState<number[]>(() =>
+    streamingPorts.filter((port) => currentPortKeys.has(port))
+  );
 
-  if (streamingPorts !== prevStreamingPorts) {
-    setPrevStreamingPorts(streamingPorts);
-    const combined = [...new Set([...visibleStreamPorts, ...streamingPorts])];
-    if (combined.length !== visibleStreamPorts.length || !combined.every((p, i) => p === visibleStreamPorts[i])) {
-      setVisibleStreamPorts(combined);
-    }
-  }
+  useEffect(() => {
+    setVisibleStreamPorts((prev) => {
+      const keepExisting = prev.filter((port) => currentPortKeys.has(port));
+      const next = [...new Set([...keepExisting, ...streamingPorts.filter((port) => currentPortKeys.has(port))])];
+      if (next.length === prev.length && next.every((port, i) => port === prev[i])) {
+        return prev;
+      }
+      return next;
+    });
+  }, [currentPortKeys, streamingPorts]);
 
   const handleFadeComplete = (port: number) => {
     setVisibleStreamPorts((prev) => prev.filter((p) => p !== port));
