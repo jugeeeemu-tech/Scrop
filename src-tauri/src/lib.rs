@@ -30,7 +30,7 @@ impl AppState {
     }
 }
 
-const EVENT_CAPTURED: &str = "packet:captured";
+const EVENT_CAPTURED_BATCH: &str = "packet:captured-batch";
 
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -63,8 +63,8 @@ async fn start_capture(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     let mut rx = inner.event_tx.subscribe();
     let app_clone = app.clone();
     let handle = tokio::spawn(async move {
-        while let Ok(packet) = rx.recv().await {
-            let _ = app_clone.emit(EVENT_CAPTURED, &packet);
+        while let Ok(batch) = rx.recv().await {
+            let _ = app_clone.emit(EVENT_CAPTURED_BATCH, &batch);
         }
     });
 

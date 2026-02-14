@@ -15,6 +15,8 @@ pub struct CapturedPacket {
     pub result: PacketResult,
 }
 
+pub type CapturedPacketBatch = Vec<CapturedPacket>;
+
 /// L4プロトコル（パケットヘッダに含まれる情報）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]

@@ -15,12 +15,12 @@ use tracing::{error, info, warn};
 
 use crate::types::{
     build_packet_id, generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket,
-    PacketResult, Protocol,
+    CapturedPacketBatch, PacketResult, Protocol,
 };
 use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS};
 
 use crate::drop_reason::DropReasonResolver;
-use crate::CaptureError;
+use crate::{CaptureError, BATCH_FLUSH_INTERVAL_MS, BATCH_MAX_SIZE};
 
 // ELF64 ヘッダは 8-byte アラインメントが必要だが、include_bytes! は 1-byte しか保証しない。
 // object クレートがアラインメントを検証するため、明示的に 8-byte 境界に配置する。
@@ -72,7 +72,7 @@ impl EbpfCapture {
         self.stats.lock().unwrap().clone()
     }
 
-    pub fn start(&self, event_tx: broadcast::Sender<CapturedPacket>) {
+    pub fn start(&self, event_tx: broadcast::Sender<CapturedPacketBatch>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -233,7 +233,7 @@ fn attach_xdp(program: &mut Xdp, iface: &str) -> Result<XdpLinkId, String> {
 // ---------------------------------------------------------------------------
 
 async fn run_ebpf_capture(
-    event_tx: broadcast::Sender<CapturedPacket>,
+    event_tx: broadcast::Sender<CapturedPacketBatch>,
     mut cmd_rx: mpsc::Receiver<EbpfCommand>,
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
@@ -347,7 +347,10 @@ async fn run_ebpf_capture(
 
     tokio::spawn(async move {
         let mut pending: HashMap<FiveTuple, PendingPacket> = HashMap::new();
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
+        let mut timeout_interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
+        let mut batch_flush_interval =
+            tokio::time::interval(tokio::time::Duration::from_millis(BATCH_FLUSH_INTERVAL_MS));
+        let mut out_batch: CapturedPacketBatch = Vec::with_capacity(BATCH_MAX_SIZE);
         const TIMEOUT_MS: u128 = 50;
 
         loop {
@@ -379,7 +382,10 @@ async fn run_ebpf_capture(
                                         Some(reason),
                                     );
                                     update_stats(&correlation_stats, &captured.result);
-                                    let _ = correlation_event_tx.send(captured);
+                                    out_batch.push(captured);
+                                    if out_batch.len() >= BATCH_MAX_SIZE {
+                                        flush_captured_batch(&correlation_event_tx, &mut out_batch);
+                                    }
                                 }
                                 // pending にマッチしない kfree_skb イベントは破棄する
                             }
@@ -387,7 +393,7 @@ async fn run_ebpf_capture(
                         None => break, // チャネル閉鎖
                     }
                 }
-                _ = interval.tick() => {
+                _ = timeout_interval.tick() => {
                     if !correlation_is_running.load(Ordering::SeqCst) && pending.is_empty() {
                         break;
                     }
@@ -410,12 +416,20 @@ async fn run_ebpf_capture(
                                 None,
                             );
                             update_stats(&correlation_stats, &captured.result);
-                            let _ = correlation_event_tx.send(captured);
+                            out_batch.push(captured);
+                            if out_batch.len() >= BATCH_MAX_SIZE {
+                                flush_captured_batch(&correlation_event_tx, &mut out_batch);
+                            }
                         }
                     }
                 }
+                _ = batch_flush_interval.tick() => {
+                    flush_captured_batch(&correlation_event_tx, &mut out_batch);
+                }
             }
         }
+
+        flush_captured_batch(&correlation_event_tx, &mut out_batch);
     });
 
     // コマンドループ: attach/detach コマンドを受信して処理
@@ -525,6 +539,17 @@ fn update_stats(stats: &std::sync::Mutex<CaptureStats>, result: &PacketResult) {
         PacketResult::NicDrop => s.nic_dropped += 1,
         PacketResult::FwDrop => s.fw_dropped += 1,
     }
+}
+
+fn flush_captured_batch(
+    tx: &broadcast::Sender<CapturedPacketBatch>,
+    out_batch: &mut CapturedPacketBatch,
+) {
+    if out_batch.is_empty() {
+        return;
+    }
+    let batch = std::mem::take(out_batch);
+    let _ = tx.send(batch);
 }
 
 fn convert_event(

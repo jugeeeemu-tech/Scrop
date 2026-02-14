@@ -1,5 +1,6 @@
 import type { Transport } from './index';
-import type { CapturedPacket } from '../types';
+import type { CapturedPacket, CapturedPacketBatch } from '../types';
+import { createPacketReplayer } from './replay';
 
 function getBaseUrl(): string {
   return window.location.origin;
@@ -56,6 +57,7 @@ export function createWebTransport(): Transport {
       let shouldReconnect = true;
       let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
       let reconnectDelay = 1000;
+      const replayer = createPacketReplayer(onPacket);
 
       function connect() {
         ws = new WebSocket(getWsUrl());
@@ -66,8 +68,12 @@ export function createWebTransport(): Transport {
 
         ws.onmessage = (event) => {
           try {
-            const packet: CapturedPacket = JSON.parse(event.data);
-            onPacket(packet);
+            const batch: CapturedPacketBatch = JSON.parse(event.data);
+            if (!Array.isArray(batch)) {
+              console.error('Unexpected WebSocket payload shape:', batch);
+              return;
+            }
+            replayer.enqueue(batch);
           } catch (e) {
             console.error('Failed to parse WebSocket message:', e);
           }
@@ -92,6 +98,7 @@ export function createWebTransport(): Transport {
         shouldReconnect = false;
         if (reconnectTimer) clearTimeout(reconnectTimer);
         ws?.close();
+        replayer.dispose();
       };
     },
   };

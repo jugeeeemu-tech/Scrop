@@ -21,8 +21,8 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
         tokio::select! {
             result = rx.recv() => {
                 match result {
-                    Ok(packet) => {
-                        match serde_json::to_string(&packet) {
+                    Ok(batch) => {
+                        match serde_json::to_string(&batch) {
                             Ok(json) => {
                                 if socket.send(Message::Text(json.into())).await.is_err() {
                                     break; // Client disconnected
@@ -34,7 +34,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(skipped = n, "websocket client lagged");
+                        warn!(skipped_batches = n, "websocket client lagged");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         break; // Channel closed

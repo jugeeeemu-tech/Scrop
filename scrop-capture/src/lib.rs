@@ -9,7 +9,11 @@ pub mod types;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 use tracing::info;
-use types::{CaptureStats, CapturedPacket};
+use types::{CaptureStats, CapturedPacketBatch};
+
+pub const BATCH_FLUSH_INTERVAL_MS: u64 = 100;
+pub const BATCH_MAX_SIZE: usize = 256;
+pub const EVENT_CHANNEL_CAPACITY: usize = 128;
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -43,7 +47,7 @@ pub enum CaptureBackend {
 }
 
 impl CaptureBackend {
-    pub fn start(&self, tx: broadcast::Sender<CapturedPacket>) {
+    pub fn start(&self, tx: broadcast::Sender<CapturedPacketBatch>) {
         match self {
             #[cfg(not(feature = "ebpf"))]
             CaptureBackend::Mock(m) => m.start(tx),
@@ -176,12 +180,12 @@ fn create_backend() -> CaptureBackend {
 
 pub struct AppState {
     pub capture: Arc<Mutex<CaptureBackend>>,
-    pub event_tx: broadcast::Sender<CapturedPacket>,
+    pub event_tx: broadcast::Sender<CapturedPacketBatch>,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        let (event_tx, _) = broadcast::channel(1024);
+        let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Self {
             capture: Arc::new(Mutex::new(create_backend())),
             event_tx,

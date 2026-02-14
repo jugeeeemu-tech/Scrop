@@ -8,6 +8,7 @@ export interface AnimatingPacket {
   destPort: number;
   targetPort?: number;
   timestamp: number;
+  captureMonoNs?: number;
   reason?: string;
 }
 
@@ -30,3 +31,5 @@ export interface CapturedPacket {
   packet: AnimatingPacket;
   result: PacketResult;
 }
+
+export type CapturedPacketBatch = CapturedPacket[];

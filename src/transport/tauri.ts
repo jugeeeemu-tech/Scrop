@@ -1,5 +1,6 @@
 import type { Transport } from './index';
-import type { CapturedPacket } from '../types';
+import type { CapturedPacket, CapturedPacketBatch } from '../types';
+import { createPacketReplayer } from './replay';
 
 export function createTauriTransport(): Transport {
   return {
@@ -36,10 +37,15 @@ export function createTauriTransport(): Transport {
     subscribePackets(onPacket: (data: CapturedPacket) => void): () => void {
       let unlisten: (() => void) | null = null;
       let disposed = false;
+      const replayer = createPacketReplayer(onPacket);
 
       import('@tauri-apps/api/event').then(({ listen }) => {
-        listen<CapturedPacket>('packet:captured', (event) => {
-          onPacket(event.payload);
+        listen<CapturedPacketBatch>('packet:captured-batch', (event) => {
+          if (!Array.isArray(event.payload)) {
+            console.error('Unexpected Tauri event payload shape:', event.payload);
+            return;
+          }
+          replayer.enqueue(event.payload);
         }).then((fn) => {
           if (disposed) {
             fn();
@@ -52,6 +58,7 @@ export function createTauriTransport(): Transport {
       return () => {
         disposed = true;
         if (unlisten) unlisten();
+        replayer.dispose();
       };
     },
   };

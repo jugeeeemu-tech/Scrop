@@ -5,7 +5,8 @@ use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
 use crate::types::{
-    generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket, PacketResult,
+    generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket, CapturedPacketBatch,
+    PacketResult,
 };
 use crate::CaptureError;
 
@@ -143,7 +144,7 @@ impl MockCapture {
         self.stats.lock().unwrap().clone()
     }
 
-    pub fn start(&self, tx: broadcast::Sender<CapturedPacket>) {
+    pub fn start(&self, tx: broadcast::Sender<CapturedPacketBatch>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
             return; // Already running
         }
@@ -173,6 +174,7 @@ impl MockCapture {
                     continue;
                 }
 
+                let mut out_batch = Vec::with_capacity(batch_size as usize);
                 for _ in 0..batch_size {
                     let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
                     let packet = AnimatingPacket::generate(&session_id, counter);
@@ -201,7 +203,11 @@ impl MockCapture {
 
                     // Send via broadcast channel
                     let captured = CapturedPacket { packet, result };
-                    let _ = tx.send(captured);
+                    out_batch.push(captured);
+                }
+
+                if !out_batch.is_empty() {
+                    let _ = tx.send(out_batch);
                 }
 
                 sleep(Duration::from_millis(interval_ms)).await;
@@ -231,6 +237,10 @@ mod tests {
             .parse::<u64>()
             .expect("packet counter should be valid u64");
         (parts[1].to_string(), counter)
+    }
+
+    fn first_packet(batch: CapturedPacketBatch) -> CapturedPacket {
+        batch.into_iter().next().expect("batch should not be empty")
     }
 
     #[test]
@@ -274,7 +284,7 @@ mod tests {
 
         mock.stop();
         assert!(result.is_ok(), "Timed out waiting for packet");
-        let captured = result.unwrap().unwrap();
+        let captured = first_packet(result.unwrap().unwrap());
         assert!(!captured.packet.id.is_empty());
     }
 
@@ -285,9 +295,14 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(64);
         mock.start(tx);
 
-        // Receive a few packets
-        for _ in 0..3 {
-            let _ = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await;
+        // Receive at least a few packets across one or more batches.
+        let mut received_packets = 0usize;
+        while received_packets < 3 {
+            let batch = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("timed out waiting for batch")
+                .expect("failed receiving batch");
+            received_packets += batch.len();
         }
 
         mock.stop();
@@ -539,19 +554,23 @@ mod tests {
 
         let (tx1, mut rx1) = broadcast::channel(16);
         mock.start(tx1);
-        let first = tokio::time::timeout(Duration::from_secs(2), rx1.recv())
-            .await
-            .expect("first packet timeout")
-            .expect("first packet receive failed");
+        let first = first_packet(
+            tokio::time::timeout(Duration::from_secs(2), rx1.recv())
+                .await
+                .expect("first packet timeout")
+                .expect("first packet receive failed"),
+        );
         mock.stop();
         sleep(Duration::from_millis(100)).await;
 
         let (tx2, mut rx2) = broadcast::channel(16);
         mock.start(tx2);
-        let second = tokio::time::timeout(Duration::from_secs(2), rx2.recv())
-            .await
-            .expect("second packet timeout")
-            .expect("second packet receive failed");
+        let second = first_packet(
+            tokio::time::timeout(Duration::from_secs(2), rx2.recv())
+                .await
+                .expect("second packet timeout")
+                .expect("second packet receive failed"),
+        );
         mock.stop();
 
         let (first_session, first_counter) = parse_packet_id(&first.packet.id);
@@ -586,10 +605,12 @@ mod tests {
 
         let (tx2, mut rx2) = broadcast::channel(16);
         mock.start(tx2);
-        let second = tokio::time::timeout(Duration::from_secs(2), rx2.recv())
-            .await
-            .expect("second run packet timeout")
-            .expect("second run packet receive failed");
+        let second = first_packet(
+            tokio::time::timeout(Duration::from_secs(2), rx2.recv())
+                .await
+                .expect("second run packet timeout")
+                .expect("second run packet receive failed"),
+        );
         mock.stop();
 
         let (_, second_counter) = parse_packet_id(&second.packet.id);
@@ -597,5 +618,23 @@ mod tests {
             second_counter, 0,
             "counter should restart from zero after reset"
         );
+    }
+
+    #[tokio::test]
+    async fn generation_sends_packets_as_single_batch() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+        mock.update_config(Some(50), None, None, Some(5)).unwrap();
+
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+
+        let batch = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("batch timeout")
+            .expect("batch receive failed");
+
+        mock.stop();
+        assert_eq!(batch.len(), 5);
     }
 }
