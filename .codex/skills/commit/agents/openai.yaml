@@ -1,0 +1,4 @@
+interface:
+  display_name: "Atomic Commit Planner"
+  short_description: "Plan and execute atomic conventional commits."
+  default_prompt: "Use $commit to group current changes into atomic conventional commits and execute them after approval."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scrop GitHub Release"
+  short_description: "Run Scrop release prep and GitHub publish end-to-end."
+  default_prompt: "Use $release to choose the next version, update release files, build assets, create a draft release, and publish after confirmation."

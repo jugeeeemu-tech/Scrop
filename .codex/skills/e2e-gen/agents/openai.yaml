@@ -1,0 +1,4 @@
+interface:
+  display_name: "Interactive E2E Generator"
+  short_description: "Explore UI and generate stable Playwright E2E tests."
+  default_prompt: "Use $e2e-gen to interact with the app and produce reliable Playwright E2E tests."
