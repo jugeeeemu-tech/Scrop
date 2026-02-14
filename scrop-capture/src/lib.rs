@@ -142,11 +142,18 @@ impl CaptureBackend {
         nic_drop_rate: Option<f64>,
         fw_drop_rate: Option<f64>,
         batch_size: Option<u32>,
+        traffic_profile: Option<mock::MockTrafficProfile>,
+        dataset_size: Option<u32>,
     ) -> Result<mock::MockConfig, CaptureError> {
         match self {
-            CaptureBackend::Mock(m) => {
-                m.update_config(interval_ms, nic_drop_rate, fw_drop_rate, batch_size)
-            }
+            CaptureBackend::Mock(m) => m.update_config(
+                interval_ms,
+                nic_drop_rate,
+                fw_drop_rate,
+                batch_size,
+                traffic_profile,
+                dataset_size,
+            ),
         }
     }
 }

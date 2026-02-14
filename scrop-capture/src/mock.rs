@@ -5,8 +5,8 @@ use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
 use crate::types::{
-    generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket, CapturedPacketBatch,
-    PacketResult,
+    build_packet_id, generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket,
+    CapturedPacketBatch, PacketResult, Protocol,
 };
 use crate::CaptureError;
 
@@ -19,6 +19,8 @@ pub struct MockConfig {
     pub nic_drop_rate: f64,
     pub fw_drop_rate: f64,
     pub batch_size: u32,
+    pub traffic_profile: MockTrafficProfile,
+    pub dataset_size: u32,
 }
 
 impl Default for MockConfig {
@@ -28,6 +30,157 @@ impl Default for MockConfig {
             nic_drop_rate: 0.10,
             fw_drop_rate: 0.15,
             batch_size: 1,
+            traffic_profile: MockTrafficProfile::Realistic,
+            dataset_size: 65_536,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MockTrafficProfile {
+    Realistic,
+    Bench,
+    Dataset,
+}
+
+#[derive(Default)]
+struct BatchStatsDelta {
+    total_packets: u64,
+    nic_dropped: u64,
+    fw_dropped: u64,
+    delivered: u64,
+}
+
+fn classify_packet_result_random(nic_drop_rate: f64, fw_drop_rate: f64) -> PacketResult {
+    let random: f64 = rand::random();
+    if random < nic_drop_rate {
+        PacketResult::NicDrop
+    } else if random < nic_drop_rate + fw_drop_rate {
+        PacketResult::FwDrop
+    } else {
+        PacketResult::Delivered
+    }
+}
+
+fn classify_packet_result_deterministic(
+    counter: u64,
+    nic_drop_rate: f64,
+    fw_drop_rate: f64,
+) -> PacketResult {
+    if nic_drop_rate <= 0.0 && fw_drop_rate <= 0.0 {
+        return PacketResult::Delivered;
+    }
+
+    let sample = ((counter % 10_000) as f64 + 0.5) / 10_000.0;
+    if sample < nic_drop_rate {
+        PacketResult::NicDrop
+    } else if sample < nic_drop_rate + fw_drop_rate {
+        PacketResult::FwDrop
+    } else {
+        PacketResult::Delivered
+    }
+}
+
+fn build_dataset_packets(
+    session_id: &str,
+    dataset_size: u32,
+    nic_drop_rate: f64,
+    fw_drop_rate: f64,
+) -> Vec<CapturedPacket> {
+    const DATASET_SOURCE: &str = "192.168.1.100";
+    const DATASET_DESTINATION: &str = "10.0.0.10";
+    const DATASET_SIZE_BYTES: u32 = 512;
+    const DATASET_DEST_PORT: u16 = 443;
+    const DATASET_SRC_PORT_BASE: u16 = 40_000;
+    const DATASET_SRC_PORT_WINDOW: u16 = 1024;
+
+    let base_ts = chrono::Utc::now().timestamp_millis();
+    let mut out = Vec::with_capacity(dataset_size as usize);
+    for i in 0..dataset_size {
+        let counter = i as u64;
+        let protocol = if i % 10 == 0 {
+            Protocol::Udp
+        } else {
+            Protocol::Tcp
+        };
+        let src_port = DATASET_SRC_PORT_BASE + ((i as u16) % DATASET_SRC_PORT_WINDOW);
+        let packet = AnimatingPacket {
+            id: build_packet_id(session_id, counter),
+            protocol,
+            size: DATASET_SIZE_BYTES,
+            source: DATASET_SOURCE.to_string(),
+            src_port,
+            destination: DATASET_DESTINATION.to_string(),
+            dest_port: DATASET_DEST_PORT,
+            target_port: None,
+            timestamp: base_ts + counter as i64,
+            reason: None,
+        };
+        let result = classify_packet_result_deterministic(counter, nic_drop_rate, fw_drop_rate);
+        out.push(packet_with_result(packet, result));
+    }
+    out
+}
+
+fn packet_with_result(packet: AnimatingPacket, result: PacketResult) -> CapturedPacket {
+    let packet = match result {
+        PacketResult::NicDrop => packet.with_reason("Buffer overflow"),
+        PacketResult::FwDrop => packet.with_reason("Blocked by rule"),
+        PacketResult::Delivered => packet,
+    };
+    CapturedPacket { packet, result }
+}
+
+fn apply_result_to_delta(delta: &mut BatchStatsDelta, result: &PacketResult) {
+    delta.total_packets += 1;
+    match result {
+        PacketResult::NicDrop => delta.nic_dropped += 1,
+        PacketResult::FwDrop => delta.fw_dropped += 1,
+        PacketResult::Delivered => delta.delivered += 1,
+    }
+}
+
+fn apply_stats_delta(stats: &std::sync::Mutex<CaptureStats>, delta: BatchStatsDelta) {
+    if delta.total_packets == 0 {
+        return;
+    }
+
+    let mut s = stats.lock().unwrap();
+    s.total_packets += delta.total_packets;
+    s.nic_dropped += delta.nic_dropped;
+    s.fw_dropped += delta.fw_dropped;
+    s.delivered += delta.delivered;
+}
+
+#[derive(Default)]
+struct DatasetReplayState {
+    packets: Vec<CapturedPacket>,
+    cursor: usize,
+    nic_drop_rate: f64,
+    fw_drop_rate: f64,
+    dataset_size: u32,
+}
+
+impl DatasetReplayState {
+    fn ensure_dataset(
+        &mut self,
+        session_id: &str,
+        dataset_size: u32,
+        nic_drop_rate: f64,
+        fw_drop_rate: f64,
+    ) {
+        if self.packets.is_empty()
+            || self.dataset_size != dataset_size
+            || (self.nic_drop_rate - nic_drop_rate).abs() > f64::EPSILON
+            || (self.fw_drop_rate - fw_drop_rate).abs() > f64::EPSILON
+        {
+            self.packets =
+                build_dataset_packets(session_id, dataset_size, nic_drop_rate, fw_drop_rate);
+            self.cursor = 0;
+            self.dataset_size = dataset_size;
+            self.nic_drop_rate = nic_drop_rate;
+            self.fw_drop_rate = fw_drop_rate;
         }
     }
 }
@@ -62,6 +215,8 @@ impl MockCapture {
         nic_drop_rate: Option<f64>,
         fw_drop_rate: Option<f64>,
         batch_size: Option<u32>,
+        traffic_profile: Option<MockTrafficProfile>,
+        dataset_size: Option<u32>,
     ) -> Result<MockConfig, CaptureError> {
         let mut config = self.config.lock().unwrap();
 
@@ -69,6 +224,8 @@ impl MockCapture {
         let new_nic = nic_drop_rate.unwrap_or(config.nic_drop_rate);
         let new_fw = fw_drop_rate.unwrap_or(config.fw_drop_rate);
         let new_batch = batch_size.unwrap_or(config.batch_size);
+        let new_profile = traffic_profile.unwrap_or(config.traffic_profile);
+        let new_dataset_size = dataset_size.unwrap_or(config.dataset_size);
 
         if new_interval == 0 {
             return Err(CaptureError::InvalidState(
@@ -95,11 +252,18 @@ impl MockCapture {
                 "batchSize must be greater than 0".to_string(),
             ));
         }
+        if new_dataset_size == 0 {
+            return Err(CaptureError::InvalidState(
+                "datasetSize must be greater than 0".to_string(),
+            ));
+        }
 
         config.interval_ms = new_interval;
         config.nic_drop_rate = new_nic;
         config.fw_drop_rate = new_fw;
         config.batch_size = new_batch;
+        config.traffic_profile = new_profile;
+        config.dataset_size = new_dataset_size;
 
         Ok(config.clone())
     }
@@ -157,14 +321,31 @@ impl MockCapture {
         let session_id = generate_session_id();
 
         tokio::spawn(async move {
+            const BENCH_SOURCE: &str = "192.168.1.100";
+            const BENCH_DESTINATION: &str = "10.0.0.10";
+            const BENCH_SIZE: u32 = 512;
+            const BENCH_DEST_PORT: u16 = 443;
+            const BENCH_SRC_PORT_BASE: u16 = 40_000;
+            const BENCH_SRC_PORT_WINDOW: u16 = 1024;
+            let mut dataset_state = DatasetReplayState::default();
+
             while is_running.load(Ordering::SeqCst) {
-                let (interval_ms, nic_drop_rate, fw_drop_rate, batch_size) = {
+                let (
+                    interval_ms,
+                    nic_drop_rate,
+                    fw_drop_rate,
+                    batch_size,
+                    traffic_profile,
+                    dataset_size,
+                ) = {
                     let cfg = config.lock().unwrap();
                     (
                         cfg.interval_ms,
                         cfg.nic_drop_rate,
                         cfg.fw_drop_rate,
                         cfg.batch_size,
+                        cfg.traffic_profile,
+                        cfg.dataset_size,
                     )
                 };
 
@@ -175,38 +356,61 @@ impl MockCapture {
                 }
 
                 let mut out_batch = Vec::with_capacity(batch_size as usize);
+                let mut stats_delta = BatchStatsDelta::default();
                 for _ in 0..batch_size {
                     let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
-                    let packet = AnimatingPacket::generate(&session_id, counter);
-
-                    // Determine result immediately
-                    let random: f64 = rand::random();
-
-                    let (result, packet) = if random < nic_drop_rate {
-                        (PacketResult::NicDrop, packet.with_reason("Buffer overflow"))
-                    } else if random < nic_drop_rate + fw_drop_rate {
-                        (PacketResult::FwDrop, packet.with_reason("Blocked by rule"))
-                    } else {
-                        (PacketResult::Delivered, packet)
-                    };
-
-                    // Update stats
-                    {
-                        let mut s = stats.lock().unwrap();
-                        s.total_packets += 1;
-                        match result {
-                            PacketResult::NicDrop => s.nic_dropped += 1,
-                            PacketResult::FwDrop => s.fw_dropped += 1,
-                            PacketResult::Delivered => s.delivered += 1,
+                    let captured = match traffic_profile {
+                        MockTrafficProfile::Realistic => {
+                            let packet = AnimatingPacket::generate(&session_id, counter);
+                            let result = classify_packet_result_random(nic_drop_rate, fw_drop_rate);
+                            apply_result_to_delta(&mut stats_delta, &result);
+                            packet_with_result(packet, result)
                         }
-                    }
-
-                    // Send via broadcast channel
-                    let captured = CapturedPacket { packet, result };
+                        MockTrafficProfile::Bench => {
+                            let src_port =
+                                BENCH_SRC_PORT_BASE + ((counter as u16) % BENCH_SRC_PORT_WINDOW);
+                            let packet = AnimatingPacket {
+                                id: build_packet_id(&session_id, counter),
+                                protocol: Protocol::Tcp,
+                                size: BENCH_SIZE,
+                                source: BENCH_SOURCE.to_string(),
+                                src_port,
+                                destination: BENCH_DESTINATION.to_string(),
+                                dest_port: BENCH_DEST_PORT,
+                                target_port: None,
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                                reason: None,
+                            };
+                            let result = classify_packet_result_deterministic(
+                                counter,
+                                nic_drop_rate,
+                                fw_drop_rate,
+                            );
+                            apply_result_to_delta(&mut stats_delta, &result);
+                            packet_with_result(packet, result)
+                        }
+                        MockTrafficProfile::Dataset => {
+                            dataset_state.ensure_dataset(
+                                &session_id,
+                                dataset_size,
+                                nic_drop_rate,
+                                fw_drop_rate,
+                            );
+                            if dataset_state.packets.is_empty() {
+                                continue;
+                            }
+                            let packet = dataset_state.packets[dataset_state.cursor].clone();
+                            dataset_state.cursor =
+                                (dataset_state.cursor + 1) % dataset_state.packets.len();
+                            apply_result_to_delta(&mut stats_delta, &packet.result);
+                            packet
+                        }
+                    };
                     out_batch.push(captured);
                 }
 
                 if !out_batch.is_empty() {
+                    apply_stats_delta(&stats, stats_delta);
                     let _ = tx.send(out_batch);
                 }
 
@@ -446,6 +650,8 @@ mod tests {
         assert_eq!(config.interval_ms, 2000);
         assert!((config.nic_drop_rate - 0.10).abs() < f64::EPSILON);
         assert!((config.fw_drop_rate - 0.15).abs() < f64::EPSILON);
+        assert_eq!(config.traffic_profile, MockTrafficProfile::Realistic);
+        assert_eq!(config.dataset_size, 65_536);
     }
 
     #[test]
@@ -453,14 +659,16 @@ mod tests {
         let mock = MockCapture::new();
 
         // Update only interval
-        let config = mock.update_config(Some(100), None, None, None).unwrap();
+        let config = mock
+            .update_config(Some(100), None, None, None, None, None)
+            .unwrap();
         assert_eq!(config.interval_ms, 100);
         assert!((config.nic_drop_rate - 0.10).abs() < f64::EPSILON);
         assert!((config.fw_drop_rate - 0.15).abs() < f64::EPSILON);
 
         // Update only drop rates
         let config = mock
-            .update_config(None, Some(0.3), Some(0.2), None)
+            .update_config(None, Some(0.3), Some(0.2), None, None, None)
             .unwrap();
         assert_eq!(config.interval_ms, 100);
         assert!((config.nic_drop_rate - 0.3).abs() < f64::EPSILON);
@@ -470,7 +678,7 @@ mod tests {
     #[test]
     fn config_validation_interval_zero() {
         let mock = MockCapture::new();
-        let result = mock.update_config(Some(0), None, None, None);
+        let result = mock.update_config(Some(0), None, None, None, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("intervalMs"));
     }
@@ -478,18 +686,18 @@ mod tests {
     #[test]
     fn config_validation_nic_drop_rate_out_of_range() {
         let mock = MockCapture::new();
-        let result = mock.update_config(None, Some(1.5), None, None);
+        let result = mock.update_config(None, Some(1.5), None, None, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("nicDropRate"));
 
-        let result = mock.update_config(None, Some(-0.1), None, None);
+        let result = mock.update_config(None, Some(-0.1), None, None, None, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn config_validation_fw_drop_rate_out_of_range() {
         let mock = MockCapture::new();
-        let result = mock.update_config(None, None, Some(1.5), None);
+        let result = mock.update_config(None, None, Some(1.5), None, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("fwDropRate"));
     }
@@ -497,7 +705,7 @@ mod tests {
     #[test]
     fn config_validation_combined_rates_exceed_one() {
         let mock = MockCapture::new();
-        let result = mock.update_config(None, Some(0.6), Some(0.5), None);
+        let result = mock.update_config(None, Some(0.6), Some(0.5), None, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("<= 1.0"));
     }
@@ -512,7 +720,9 @@ mod tests {
     #[test]
     fn config_update_batch_size() {
         let mock = MockCapture::new();
-        let config = mock.update_config(None, None, None, Some(5)).unwrap();
+        let config = mock
+            .update_config(None, None, None, Some(5), None, None)
+            .unwrap();
         assert_eq!(config.batch_size, 5);
         // Other fields unchanged
         assert_eq!(config.interval_ms, 2000);
@@ -521,9 +731,42 @@ mod tests {
     #[test]
     fn config_validation_batch_size_zero() {
         let mock = MockCapture::new();
-        let result = mock.update_config(None, None, None, Some(0));
+        let result = mock.update_config(None, None, None, Some(0), None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("batchSize"));
+    }
+
+    #[test]
+    fn config_update_traffic_profile() {
+        let mock = MockCapture::new();
+        let config = mock
+            .update_config(
+                None,
+                None,
+                None,
+                None,
+                Some(MockTrafficProfile::Bench),
+                None,
+            )
+            .unwrap();
+        assert_eq!(config.traffic_profile, MockTrafficProfile::Bench);
+    }
+
+    #[test]
+    fn config_update_dataset_size() {
+        let mock = MockCapture::new();
+        let config = mock
+            .update_config(None, None, None, None, None, Some(10_000))
+            .unwrap();
+        assert_eq!(config.dataset_size, 10_000);
+    }
+
+    #[test]
+    fn config_validation_dataset_size_zero() {
+        let mock = MockCapture::new();
+        let result = mock.update_config(None, None, None, None, None, Some(0));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("datasetSize"));
     }
 
     #[tokio::test]
@@ -532,7 +775,8 @@ mod tests {
         mock.attach_interface("eth0").unwrap();
 
         // Set very fast interval
-        mock.update_config(Some(50), None, None, None).unwrap();
+        mock.update_config(Some(50), None, None, None, None, None)
+            .unwrap();
 
         let (tx, mut rx) = broadcast::channel(64);
         mock.start(tx);
@@ -550,7 +794,8 @@ mod tests {
     async fn start_stop_start_rotates_session_id_without_reset() {
         let mock = MockCapture::new();
         mock.attach_interface("eth0").unwrap();
-        mock.update_config(Some(50), None, None, None).unwrap();
+        mock.update_config(Some(50), None, None, None, None, None)
+            .unwrap();
 
         let (tx1, mut rx1) = broadcast::channel(16);
         mock.start(tx1);
@@ -590,7 +835,8 @@ mod tests {
     async fn reset_then_restart_restarts_counter_from_zero() {
         let mock = MockCapture::new();
         mock.attach_interface("eth0").unwrap();
-        mock.update_config(Some(50), None, None, None).unwrap();
+        mock.update_config(Some(50), None, None, None, None, None)
+            .unwrap();
 
         let (tx1, mut rx1) = broadcast::channel(16);
         mock.start(tx1);
@@ -624,7 +870,8 @@ mod tests {
     async fn generation_sends_packets_as_single_batch() {
         let mock = MockCapture::new();
         mock.attach_interface("eth0").unwrap();
-        mock.update_config(Some(50), None, None, Some(5)).unwrap();
+        mock.update_config(Some(50), None, None, Some(5), None, None)
+            .unwrap();
 
         let (tx, mut rx) = broadcast::channel(16);
         mock.start(tx);
@@ -636,5 +883,73 @@ mod tests {
 
         mock.stop();
         assert_eq!(batch.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn bench_profile_generates_deterministic_packets() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+        mock.update_config(
+            Some(10),
+            Some(0.0),
+            Some(0.0),
+            Some(3),
+            Some(MockTrafficProfile::Bench),
+            None,
+        )
+        .unwrap();
+
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+
+        let batch = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("batch timeout")
+            .expect("batch receive failed");
+
+        mock.stop();
+        assert_eq!(batch.len(), 3);
+        for packet in batch {
+            assert!(matches!(packet.packet.protocol, Protocol::Tcp));
+            assert_eq!(packet.packet.size, 512);
+            assert_eq!(packet.packet.source, "192.168.1.100");
+            assert_eq!(packet.packet.destination, "10.0.0.10");
+            assert_eq!(packet.packet.dest_port, 443);
+            assert!(packet.packet.src_port >= 40_000);
+            assert!(packet.packet.src_port < 41_024);
+        }
+    }
+
+    #[tokio::test]
+    async fn dataset_profile_replays_prebuilt_packets() {
+        let mock = MockCapture::new();
+        mock.attach_interface("eth0").unwrap();
+        mock.update_config(
+            Some(10),
+            Some(0.0),
+            Some(0.0),
+            Some(5),
+            Some(MockTrafficProfile::Dataset),
+            Some(8),
+        )
+        .unwrap();
+
+        let (tx, mut rx) = broadcast::channel(16);
+        mock.start(tx);
+        let first = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("first batch timeout")
+            .expect("first batch receive failed");
+        let second = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("second batch timeout")
+            .expect("second batch receive failed");
+        mock.stop();
+
+        assert_eq!(first.len(), 5);
+        assert_eq!(second.len(), 5);
+        let first_ids: Vec<&str> = first.iter().map(|p| p.packet.id.as_str()).collect();
+        let second_ids: Vec<&str> = second.iter().map(|p| p.packet.id.as_str()).collect();
+        assert_ne!(first_ids, second_ids);
     }
 }

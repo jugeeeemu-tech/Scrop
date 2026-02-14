@@ -5,6 +5,8 @@ interface MockConfig {
   nicDropRate?: number;
   fwDropRate?: number;
   batchSize?: number;
+  trafficProfile?: 'realistic' | 'bench' | 'dataset';
+  datasetSize?: number;
 }
 
 /**

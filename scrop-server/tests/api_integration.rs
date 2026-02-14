@@ -38,12 +38,13 @@ mod helpers {
             .route(
                 "/interfaces/{name}/detach",
                 post(scrop_server_routes::detach_interface),
-            )
-            .route(
-                "/mock/config",
-                get(scrop_server_routes::get_mock_config)
-                    .put(scrop_server_routes::update_mock_config),
             );
+
+        #[cfg(not(feature = "ebpf"))]
+        let api_routes = api_routes.route(
+            "/mock/config",
+            get(scrop_server_routes::get_mock_config).put(scrop_server_routes::update_mock_config),
+        );
 
         Router::new().nest("/api", api_routes).with_state(state)
     }
@@ -60,6 +61,8 @@ mod scrop_server_routes {
     use axum::response::{IntoResponse, Json, Response};
     use serde::Serialize;
 
+    #[cfg(not(feature = "ebpf"))]
+    use scrop_capture::mock::MockTrafficProfile;
     use scrop_capture::types::CaptureStats;
     use scrop_capture::{AppState, CaptureError};
 
@@ -190,6 +193,7 @@ mod scrop_server_routes {
         }))
     }
 
+    #[cfg(not(feature = "ebpf"))]
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct UpdateMockConfigRequest {
@@ -197,8 +201,11 @@ mod scrop_server_routes {
         pub nic_drop_rate: Option<f64>,
         pub fw_drop_rate: Option<f64>,
         pub batch_size: Option<u32>,
+        pub traffic_profile: Option<MockTrafficProfile>,
+        pub dataset_size: Option<u32>,
     }
 
+    #[cfg(not(feature = "ebpf"))]
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct MockConfigResponse {
@@ -206,8 +213,11 @@ mod scrop_server_routes {
         pub nic_drop_rate: f64,
         pub fw_drop_rate: f64,
         pub batch_size: u32,
+        pub traffic_profile: MockTrafficProfile,
+        pub dataset_size: u32,
     }
 
+    #[cfg(not(feature = "ebpf"))]
     pub async fn get_mock_config(
         State(state): State<Arc<AppState>>,
     ) -> Result<Json<MockConfigResponse>, ApiError> {
@@ -218,9 +228,12 @@ mod scrop_server_routes {
             nic_drop_rate: config.nic_drop_rate,
             fw_drop_rate: config.fw_drop_rate,
             batch_size: config.batch_size,
+            traffic_profile: config.traffic_profile,
+            dataset_size: config.dataset_size,
         }))
     }
 
+    #[cfg(not(feature = "ebpf"))]
     pub async fn update_mock_config(
         State(state): State<Arc<AppState>>,
         Json(req): Json<UpdateMockConfigRequest>,
@@ -232,6 +245,8 @@ mod scrop_server_routes {
                 req.nic_drop_rate,
                 req.fw_drop_rate,
                 req.batch_size,
+                req.traffic_profile,
+                req.dataset_size,
             )
             .map_err(ApiError::from)?;
         Ok(Json(MockConfigResponse {
@@ -239,6 +254,8 @@ mod scrop_server_routes {
             nic_drop_rate: config.nic_drop_rate,
             fw_drop_rate: config.fw_drop_rate,
             batch_size: config.batch_size,
+            traffic_profile: config.traffic_profile,
+            dataset_size: config.dataset_size,
         }))
     }
 }
@@ -488,11 +505,13 @@ fn build_stateful_test_app() -> (Router, Arc<AppState>) {
         .route(
             "/interfaces/{name}/detach",
             post(scrop_server_routes::detach_interface),
-        )
-        .route(
-            "/mock/config",
-            get(scrop_server_routes::get_mock_config).put(scrop_server_routes::update_mock_config),
         );
+
+    #[cfg(not(feature = "ebpf"))]
+    let api_routes = api_routes.route(
+        "/mock/config",
+        get(scrop_server_routes::get_mock_config).put(scrop_server_routes::update_mock_config),
+    );
 
     let app = Router::new()
         .nest("/api", api_routes)
@@ -521,6 +540,7 @@ async fn get_request(app: &Router, uri: &str) -> axum::http::Response<Body> {
         .unwrap()
 }
 
+#[cfg(not(feature = "ebpf"))]
 async fn put_json_request(app: &Router, uri: &str, json_body: &str) -> axum::http::Response<Body> {
     app.clone()
         .oneshot(
@@ -658,6 +678,7 @@ async fn double_attach_is_idempotent() {
 // --- Mock config API tests ---
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn get_mock_config_returns_defaults() {
     let (app, _state) = build_stateful_test_app();
 
@@ -670,9 +691,12 @@ async fn get_mock_config_returns_defaults() {
     assert_eq!(json["nicDropRate"], 0.1);
     assert_eq!(json["fwDropRate"], 0.15);
     assert_eq!(json["batchSize"], 1);
+    assert_eq!(json["trafficProfile"], "realistic");
+    assert_eq!(json["datasetSize"], 65536);
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_partial_update() {
     let (app, _state) = build_stateful_test_app();
 
@@ -685,9 +709,12 @@ async fn put_mock_config_partial_update() {
     assert_eq!(json["intervalMs"], 100);
     assert_eq!(json["nicDropRate"], 0.1);
     assert_eq!(json["fwDropRate"], 0.15);
+    assert_eq!(json["trafficProfile"], "realistic");
+    assert_eq!(json["datasetSize"], 65536);
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_full_update() {
     let (app, _state) = build_stateful_test_app();
 
@@ -704,6 +731,8 @@ async fn put_mock_config_full_update() {
     assert_eq!(json["intervalMs"], 50);
     assert_eq!(json["nicDropRate"], 0.3);
     assert_eq!(json["fwDropRate"], 0.2);
+    assert_eq!(json["trafficProfile"], "realistic");
+    assert_eq!(json["datasetSize"], 65536);
 
     // Verify GET reflects the update
     let response = get_request(&app, "/api/mock/config").await;
@@ -712,9 +741,12 @@ async fn put_mock_config_full_update() {
     assert_eq!(json["intervalMs"], 50);
     assert_eq!(json["nicDropRate"], 0.3);
     assert_eq!(json["fwDropRate"], 0.2);
+    assert_eq!(json["trafficProfile"], "realistic");
+    assert_eq!(json["datasetSize"], 65536);
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_validation_interval_zero() {
     let (app, _state) = build_stateful_test_app();
 
@@ -723,6 +755,7 @@ async fn put_mock_config_validation_interval_zero() {
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_validation_rate_out_of_range() {
     let (app, _state) = build_stateful_test_app();
 
@@ -731,6 +764,7 @@ async fn put_mock_config_validation_rate_out_of_range() {
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_validation_combined_rates_exceed_one() {
     let (app, _state) = build_stateful_test_app();
 
@@ -744,6 +778,7 @@ async fn put_mock_config_validation_combined_rates_exceed_one() {
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_batch_size_update() {
     let (app, _state) = build_stateful_test_app();
 
@@ -757,12 +792,45 @@ async fn put_mock_config_batch_size_update() {
     assert_eq!(json["intervalMs"], 2000);
     assert_eq!(json["nicDropRate"], 0.1);
     assert_eq!(json["fwDropRate"], 0.15);
+    assert_eq!(json["trafficProfile"], "realistic");
+    assert_eq!(json["datasetSize"], 65536);
 }
 
 #[tokio::test]
+#[cfg(not(feature = "ebpf"))]
 async fn put_mock_config_validation_batch_size_zero() {
     let (app, _state) = build_stateful_test_app();
 
     let response = put_json_request(&app, "/api/mock/config", r#"{"batchSize": 0}"#).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[cfg(not(feature = "ebpf"))]
+async fn put_mock_config_traffic_profile_update() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = put_json_request(
+        &app,
+        "/api/mock/config",
+        r#"{"trafficProfile":"bench","intervalMs": 50, "batchSize": 8, "datasetSize": 8192}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["trafficProfile"], "bench");
+    assert_eq!(json["intervalMs"], 50);
+    assert_eq!(json["batchSize"], 8);
+    assert_eq!(json["datasetSize"], 8192);
+}
+
+#[tokio::test]
+#[cfg(not(feature = "ebpf"))]
+async fn put_mock_config_validation_dataset_size_zero() {
+    let (app, _state) = build_stateful_test_app();
+
+    let response = put_json_request(&app, "/api/mock/config", r#"{"datasetSize": 0}"#).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

@@ -9,6 +9,8 @@ use scrop_capture::types::CaptureStats;
 use scrop_capture::{AppState, CaptureError};
 
 #[cfg(not(feature = "ebpf"))]
+use scrop_capture::mock::MockTrafficProfile;
+#[cfg(not(feature = "ebpf"))]
 use serde::Deserialize;
 
 #[derive(Serialize)]
@@ -146,6 +148,8 @@ pub struct UpdateMockConfigRequest {
     pub nic_drop_rate: Option<f64>,
     pub fw_drop_rate: Option<f64>,
     pub batch_size: Option<u32>,
+    pub traffic_profile: Option<MockTrafficProfile>,
+    pub dataset_size: Option<u32>,
 }
 
 #[cfg(not(feature = "ebpf"))]
@@ -156,6 +160,8 @@ pub struct MockConfigResponse {
     pub nic_drop_rate: f64,
     pub fw_drop_rate: f64,
     pub batch_size: u32,
+    pub traffic_profile: MockTrafficProfile,
+    pub dataset_size: u32,
 }
 
 #[cfg(not(feature = "ebpf"))]
@@ -169,6 +175,8 @@ pub async fn get_mock_config(
         nic_drop_rate: config.nic_drop_rate,
         fw_drop_rate: config.fw_drop_rate,
         batch_size: config.batch_size,
+        traffic_profile: config.traffic_profile,
+        dataset_size: config.dataset_size,
     }))
 }
 
@@ -184,6 +192,8 @@ pub async fn update_mock_config(
             req.nic_drop_rate,
             req.fw_drop_rate,
             req.batch_size,
+            req.traffic_profile,
+            req.dataset_size,
         )
         .map_err(ApiError::from)?;
     Ok(Json(MockConfigResponse {
@@ -191,5 +201,7 @@ pub async fn update_mock_config(
         nic_drop_rate: config.nic_drop_rate,
         fw_drop_rate: config.fw_drop_rate,
         batch_size: config.batch_size,
+        traffic_profile: config.traffic_profile,
+        dataset_size: config.dataset_size,
     }))
 }
