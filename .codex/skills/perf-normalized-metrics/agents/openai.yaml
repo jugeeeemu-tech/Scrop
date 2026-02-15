@@ -1,0 +1,4 @@
+interface:
+  display_name: "Normalized Perf Metrics"
+  short_description: "Compute fair CPU-normalized benchmark comparisons."
+  default_prompt: "Use $perf-normalized-metrics to convert benchmark JSON into fair profile and overall metrics."

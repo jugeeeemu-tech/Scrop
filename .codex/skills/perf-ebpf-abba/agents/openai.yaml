@@ -1,0 +1,4 @@
+interface:
+  display_name: "eBPF ABBA Benchmark"
+  short_description: "Run privileged before/after eBPF ABBA benchmarks."
+  default_prompt: "Use $perf-ebpf-abba to execute a root-required ABBA benchmark and collect artifacts."

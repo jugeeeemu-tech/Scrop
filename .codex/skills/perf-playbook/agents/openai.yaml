@@ -1,0 +1,4 @@
+interface:
+  display_name: "Performance Playbook"
+  short_description: "Plan low-noise benchmark campaigns for Scrop."
+  default_prompt: "Use $perf-playbook to choose and run a fair performance evaluation method."
