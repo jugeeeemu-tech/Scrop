@@ -24,7 +24,6 @@ export namespace scrop {
       destination?: string | null;
       destPort?: number | null;
       targetPort?: number | null;
-      timestamp?: number | null;
       reason?: string | null;
       captureMonoNs?: number | null;
     }
@@ -39,9 +38,8 @@ export namespace scrop {
       public destination: string;
       public destPort: number;
       public targetPort?: number | null;
-      public timestamp: number;
       public reason?: string | null;
-      public captureMonoNs?: number | null;
+      public captureMonoNs: number;
     }
 
     interface ICapturedPacket {
@@ -58,12 +56,14 @@ export namespace scrop {
     interface IPacketBatchEnvelope {
       schemaVersion?: number | null;
       packets?: ICapturedPacket[] | null;
+      epochOffsetMs?: number | null;
     }
 
     class PacketBatchEnvelope implements IPacketBatchEnvelope {
       constructor(properties?: IPacketBatchEnvelope);
       public schemaVersion: number;
       public packets: CapturedPacket[];
+      public epochOffsetMs: number;
       public static encode(
         message: IPacketBatchEnvelope,
         writer?: $protobuf.Writer

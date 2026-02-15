@@ -31,6 +31,7 @@ struct packet_event {
     __u32 pkt_len;
     __u32 action;
     __u32 drop_reason;
+    __u64 ktime_ns;
 };
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ int scrop_xdp(struct xdp_md *ctx)
     event.pkt_len     = bpf_ntohs(iph->tot_len);
     event.action      = ACTION_XDP_PASS;
     event.drop_reason = 0;
+    event.ktime_ns    = bpf_ktime_get_ns();
 
     bpf_perf_event_output(ctx, &EVENTS, BPF_F_CURRENT_CPU,
                           &event, sizeof(event));
@@ -246,6 +248,7 @@ int scrop_kfree_skb(struct kfree_skb_ctx *ctx)
     event.pkt_len     = pkt_len;
     event.action      = ACTION_KFREE_SKB;
     event.drop_reason = reason;
+    event.ktime_ns    = bpf_ktime_get_ns();
 
     bpf_perf_event_output(ctx, &EVENTS, BPF_F_CURRENT_CPU,
                           &event, sizeof(event));

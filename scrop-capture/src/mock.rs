@@ -5,8 +5,8 @@ use tokio::sync::broadcast;
 use tokio::time::{sleep, Duration};
 
 use crate::types::{
-    build_packet_id, generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket,
-    CapturedPacketBatch, PacketResult, Protocol,
+    build_packet_id, generate_session_id, monotonic_now_ns, AnimatingPacket, CaptureStats,
+    CapturedPacket, CapturedPacketEnvelope, PacketResult, Protocol,
 };
 use crate::CaptureError;
 
@@ -95,7 +95,7 @@ fn build_dataset_packets(
     const DATASET_SRC_PORT_BASE: u16 = 40_000;
     const DATASET_SRC_PORT_WINDOW: u16 = 1024;
 
-    let base_ts = chrono::Utc::now().timestamp_millis();
+    let base_mono_ns = monotonic_now_ns();
     let mut out = Vec::with_capacity(dataset_size as usize);
     for i in 0..dataset_size {
         let counter = i as u64;
@@ -114,7 +114,7 @@ fn build_dataset_packets(
             destination: DATASET_DESTINATION.to_string(),
             dest_port: DATASET_DEST_PORT,
             target_port: None,
-            timestamp: base_ts + counter as i64,
+            capture_mono_ns: base_mono_ns.saturating_add(counter * 1_000_000),
             reason: None,
         };
         let result = classify_packet_result_deterministic(counter, nic_drop_rate, fw_drop_rate);
@@ -151,6 +151,10 @@ fn apply_stats_delta(stats: &std::sync::Mutex<CaptureStats>, delta: BatchStatsDe
     s.nic_dropped += delta.nic_dropped;
     s.fw_dropped += delta.fw_dropped;
     s.delivered += delta.delivered;
+}
+
+fn current_epoch_offset_ms() -> f64 {
+    chrono::Utc::now().timestamp_millis() as f64 - (monotonic_now_ns() as f64 / 1_000_000.0)
 }
 
 #[derive(Default)]
@@ -308,7 +312,7 @@ impl MockCapture {
         self.stats.lock().unwrap().clone()
     }
 
-    pub fn start(&self, tx: broadcast::Sender<CapturedPacketBatch>) {
+    pub fn start(&self, tx: broadcast::Sender<CapturedPacketEnvelope>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
             return; // Already running
         }
@@ -378,7 +382,7 @@ impl MockCapture {
                                 destination: BENCH_DESTINATION.to_string(),
                                 dest_port: BENCH_DEST_PORT,
                                 target_port: None,
-                                timestamp: chrono::Utc::now().timestamp_millis(),
+                                capture_mono_ns: monotonic_now_ns(),
                                 reason: None,
                             };
                             let result = classify_packet_result_deterministic(
@@ -411,7 +415,10 @@ impl MockCapture {
 
                 if !out_batch.is_empty() {
                     apply_stats_delta(&stats, stats_delta);
-                    let _ = tx.send(out_batch);
+                    let _ = tx.send(CapturedPacketEnvelope {
+                        packets: out_batch,
+                        epoch_offset_ms: current_epoch_offset_ms(),
+                    });
                 }
 
                 sleep(Duration::from_millis(interval_ms)).await;
@@ -443,8 +450,12 @@ mod tests {
         (parts[1].to_string(), counter)
     }
 
-    fn first_packet(batch: CapturedPacketBatch) -> CapturedPacket {
-        batch.into_iter().next().expect("batch should not be empty")
+    fn first_packet(batch: CapturedPacketEnvelope) -> CapturedPacket {
+        batch
+            .packets
+            .into_iter()
+            .next()
+            .expect("batch should not be empty")
     }
 
     #[test]
@@ -506,7 +517,7 @@ mod tests {
                 .await
                 .expect("timed out waiting for batch")
                 .expect("failed receiving batch");
-            received_packets += batch.len();
+            received_packets += batch.packets.len();
         }
 
         mock.stop();
@@ -882,7 +893,7 @@ mod tests {
             .expect("batch receive failed");
 
         mock.stop();
-        assert_eq!(batch.len(), 5);
+        assert_eq!(batch.packets.len(), 5);
     }
 
     #[tokio::test]
@@ -908,8 +919,8 @@ mod tests {
             .expect("batch receive failed");
 
         mock.stop();
-        assert_eq!(batch.len(), 3);
-        for packet in batch {
+        assert_eq!(batch.packets.len(), 3);
+        for packet in batch.packets {
             assert!(matches!(packet.packet.protocol, Protocol::Tcp));
             assert_eq!(packet.packet.size, 512);
             assert_eq!(packet.packet.source, "192.168.1.100");
@@ -946,10 +957,14 @@ mod tests {
             .expect("second batch receive failed");
         mock.stop();
 
-        assert_eq!(first.len(), 5);
-        assert_eq!(second.len(), 5);
-        let first_ids: Vec<&str> = first.iter().map(|p| p.packet.id.as_str()).collect();
-        let second_ids: Vec<&str> = second.iter().map(|p| p.packet.id.as_str()).collect();
+        assert_eq!(first.packets.len(), 5);
+        assert_eq!(second.packets.len(), 5);
+        let first_ids: Vec<&str> = first.packets.iter().map(|p| p.packet.id.as_str()).collect();
+        let second_ids: Vec<&str> = second
+            .packets
+            .iter()
+            .map(|p| p.packet.id.as_str())
+            .collect();
         assert_ne!(first_ids, second_ids);
     }
 }

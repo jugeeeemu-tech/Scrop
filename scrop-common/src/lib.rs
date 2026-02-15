@@ -28,4 +28,6 @@ pub struct PacketEvent {
     pub action: u32,
     /// skb_drop_reason（0 = ドロップなし、kfree_skb時のみ有効）
     pub drop_reason: u32,
+    /// monotonic 時刻（ns）
+    pub ktime_ns: u64,
 }

@@ -1,17 +1,18 @@
 use scrop_capture::types::{
-    AnimatingPacket, CapturedPacket, CapturedPacketBatch, PacketResult, Protocol,
+    AnimatingPacket, CapturedPacket, CapturedPacketEnvelope, PacketResult, Protocol,
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/scrop.packet.rs"));
 }
 
-pub fn batch_to_envelope(batch: &CapturedPacketBatch) -> pb::PacketBatchEnvelope {
+pub fn batch_to_envelope(batch: &CapturedPacketEnvelope) -> pb::PacketBatchEnvelope {
     pb::PacketBatchEnvelope {
         schema_version: SCHEMA_VERSION,
-        packets: batch.iter().map(packet_to_proto).collect(),
+        packets: batch.packets.iter().map(packet_to_proto).collect(),
+        epoch_offset_ms: batch.epoch_offset_ms,
     }
 }
 
@@ -32,9 +33,8 @@ fn animating_packet_to_proto(packet: &AnimatingPacket) -> pb::AnimatingPacket {
         destination: packet.destination.clone(),
         dest_port: packet.dest_port as u32,
         target_port: packet.target_port.map(u32::from),
-        timestamp: packet.timestamp as f64,
         reason: packet.reason.clone(),
-        capture_mono_ns: None,
+        capture_mono_ns: packet.capture_mono_ns as f64,
     }
 }
 

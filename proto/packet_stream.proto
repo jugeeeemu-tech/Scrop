@@ -5,6 +5,7 @@ package scrop.packet;
 message PacketBatchEnvelope {
   uint32 schema_version = 1;
   repeated CapturedPacket packets = 2;
+  double epoch_offset_ms = 3;
 }
 
 message CapturedPacket {
@@ -21,9 +22,10 @@ message AnimatingPacket {
   string destination = 6;
   uint32 dest_port = 7;
   optional uint32 target_port = 8;
-  double timestamp = 9;
+  reserved 9;
+  reserved "timestamp";
   optional string reason = 10;
-  optional double capture_mono_ns = 11;
+  double capture_mono_ns = 11;
 }
 
 enum Protocol {

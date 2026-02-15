@@ -15,7 +15,12 @@ pub struct CapturedPacket {
     pub result: PacketResult,
 }
 
-pub type CapturedPacketBatch = Vec<CapturedPacket>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturedPacketEnvelope {
+    pub packets: Vec<CapturedPacket>,
+    pub epoch_offset_ms: f64,
+}
 
 /// L4プロトコル（パケットヘッダに含まれる情報）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +44,20 @@ impl Protocol {
 /// モック用のwell-knownポート一覧
 const WELL_KNOWN_PORTS: &[u16] = &[80, 443, 22, 8080, 53, 25, 21];
 const SESSION_ID_LENGTH: usize = 6;
+
+pub fn monotonic_now_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    if rc != 0 || ts.tv_sec < 0 || ts.tv_nsec < 0 {
+        return 0;
+    }
+    (ts.tv_sec as u64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(ts.tv_nsec as u64)
+}
 
 pub fn generate_session_id() -> String {
     use rand::Rng;
@@ -71,7 +90,7 @@ pub struct AnimatingPacket {
     pub destination: String,
     pub dest_port: u16,
     pub target_port: Option<u8>,
-    pub timestamp: i64,
+    pub capture_mono_ns: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -96,7 +115,7 @@ impl AnimatingPacket {
             destination: format!("10.0.0.{}", rng.random_range(1..255)),
             dest_port,
             target_port: None,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            capture_mono_ns: monotonic_now_ns(),
             reason: None,
         }
     }
@@ -131,6 +150,7 @@ mod tests {
         assert!(pkt.destination.starts_with("10.0.0."));
         assert_eq!(pkt.id, "pkt-abc123-0");
         assert!(pkt.target_port.is_none());
+        assert!(pkt.capture_mono_ns > 0);
         assert!(pkt.reason.is_none());
     }
 
@@ -184,6 +204,7 @@ mod tests {
         assert!(json.contains("\"srcPort\""));
         assert!(json.contains("\"destPort\""));
         assert!(json.contains("\"targetPort\""));
+        assert!(json.contains("\"captureMonoNs\""));
         // reason=None のときは skip_serializing_if で省略される
         assert!(!json.contains("\"reason\""));
     }
@@ -217,5 +238,19 @@ mod tests {
         assert_eq!(stats.nic_dropped, 0);
         assert_eq!(stats.fw_dropped, 0);
         assert_eq!(stats.delivered, 0);
+    }
+
+    #[test]
+    fn captured_packet_envelope_serializes_to_camel_case() {
+        let envelope = CapturedPacketEnvelope {
+            packets: vec![CapturedPacket {
+                packet: AnimatingPacket::generate("abc123", 1),
+                result: PacketResult::Delivered,
+            }],
+            epoch_offset_ms: 123.5,
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"epochOffsetMs\""));
+        assert!(json.contains("\"packets\""));
     }
 }

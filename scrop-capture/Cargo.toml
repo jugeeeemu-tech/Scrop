@@ -10,6 +10,7 @@ tokio = { version = "1", features = ["full"] }
 rand = "0.9"
 chrono = "0.4"
 tracing = "0.1"
+libc = "0.2"
 
 # eBPF dependencies (optional)
 aya = { version = "0.13", features = ["async_tokio"], optional = true }

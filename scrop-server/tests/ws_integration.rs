@@ -7,7 +7,9 @@ use futures_util::StreamExt;
 use prost::Message as _;
 use tokio_tungstenite::tungstenite::Message;
 
-use scrop_capture::types::{AnimatingPacket, CapturedPacket, PacketResult, Protocol};
+use scrop_capture::types::{
+    AnimatingPacket, CapturedPacket, CapturedPacketEnvelope, PacketResult, Protocol,
+};
 use scrop_capture::AppState;
 
 #[path = "../src/ws.rs"]
@@ -26,14 +28,14 @@ fn sample_captured_packet(id: &str) -> CapturedPacket {
             destination: "10.0.0.1".to_string(),
             dest_port: 80,
             target_port: Some(80),
-            timestamp: 1_700_000_000_000,
+            capture_mono_ns: 1_000_000_000,
             reason: None,
         },
         result: PacketResult::Delivered,
     }
 }
 
-async fn send_batch_when_subscribed(state: &Arc<AppState>, batch: Vec<CapturedPacket>) {
+async fn send_batch_when_subscribed(state: &Arc<AppState>, batch: CapturedPacketEnvelope) {
     for _ in 0..30 {
         if state.event_tx.send(batch.clone()).is_ok() {
             return;
@@ -64,10 +66,13 @@ async fn websocket_streams_batches_as_binary_protobuf() {
         .await
         .expect("connect websocket");
 
-    let batch = vec![
-        sample_captured_packet("pkt-test-1"),
-        sample_captured_packet("pkt-test-2"),
-    ];
+    let batch = CapturedPacketEnvelope {
+        packets: vec![
+            sample_captured_packet("pkt-test-1"),
+            sample_captured_packet("pkt-test-2"),
+        ],
+        epoch_offset_ms: 1_700_000_000_000.0,
+    };
     send_batch_when_subscribed(&state, batch).await;
 
     let next = tokio::time::timeout(Duration::from_secs(2), socket.next())
@@ -83,11 +88,13 @@ async fn websocket_streams_batches_as_binary_protobuf() {
 
     let envelope = ws_proto::pb::PacketBatchEnvelope::decode(bytes).expect("decode protobuf");
     assert_eq!(envelope.schema_version, ws_proto::SCHEMA_VERSION);
+    assert_eq!(envelope.epoch_offset_ms, 1_700_000_000_000.0);
     assert_eq!(envelope.packets.len(), 2);
 
     let first = envelope.packets.first().expect("first packet");
     let packet = first.packet.as_ref().expect("captured packet payload");
     assert_eq!(packet.id, "pkt-test-1");
+    assert_eq!(packet.capture_mono_ns, 1_000_000_000.0);
 
     let result = ws_proto::pb::PacketResult::try_from(first.result).expect("packet result enum");
     assert_eq!(result, ws_proto::pb::PacketResult::Delivered);

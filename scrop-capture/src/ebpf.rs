@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use aya::maps::{AsyncPerfEventArray, HashMap as AyaHashMap};
@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 
 use crate::types::{
     build_packet_id, generate_session_id, AnimatingPacket, CaptureStats, CapturedPacket,
-    CapturedPacketBatch, PacketResult, Protocol,
+    CapturedPacketEnvelope, PacketResult, Protocol,
 };
 use scrop_common::{PacketEvent, ACTION_KFREE_SKB, ACTION_XDP_PASS};
 
@@ -31,6 +31,7 @@ static EBPF_ELF_ALIGNED: &AlignedBytes<
     { include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")).len() },
 > = &AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")));
 static EBPF_ELF: &[u8] = &EBPF_ELF_ALIGNED.0;
+const OFFSET_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------------------
 // コマンドチャネル
@@ -72,7 +73,7 @@ impl EbpfCapture {
         self.stats.lock().unwrap().clone()
     }
 
-    pub fn start(&self, event_tx: broadcast::Sender<CapturedPacketBatch>) {
+    pub fn start(&self, event_tx: broadcast::Sender<CapturedPacketEnvelope>) {
         if self.is_running.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -173,6 +174,59 @@ fn get_ifindex(iface: &str) -> Option<u32> {
         .and_then(|s| s.trim().parse::<u32>().ok())
 }
 
+fn clock_gettime_ns(clock_id: libc::clockid_t) -> Result<u64, String> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { libc::clock_gettime(clock_id, &mut ts) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    if ts.tv_sec < 0 || ts.tv_nsec < 0 {
+        return Err("clock_gettime returned negative timespec".to_string());
+    }
+    Ok((ts.tv_sec as u64)
+        .saturating_mul(1_000_000_000)
+        .saturating_add(ts.tv_nsec as u64))
+}
+
+fn calculate_epoch_offset_ms() -> Result<f64, String> {
+    let realtime_ns = clock_gettime_ns(libc::CLOCK_REALTIME)?;
+    let monotonic_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)?;
+    Ok((realtime_ns as f64 - monotonic_ns as f64) / 1_000_000.0)
+}
+
+struct EpochOffsetCache {
+    epoch_offset_ms: f64,
+    last_refresh: Instant,
+}
+
+impl EpochOffsetCache {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            epoch_offset_ms: calculate_epoch_offset_ms()?,
+            last_refresh: Instant::now(),
+        })
+    }
+
+    fn current_offset_ms(&mut self) -> f64 {
+        if self.last_refresh.elapsed() >= OFFSET_REFRESH_INTERVAL {
+            match calculate_epoch_offset_ms() {
+                Ok(offset_ms) => {
+                    self.epoch_offset_ms = offset_ms;
+                    self.last_refresh = Instant::now();
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to refresh epoch offset; reusing previous value");
+                    self.last_refresh = Instant::now();
+                }
+            }
+        }
+        self.epoch_offset_ms
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 相関ロジック用の型定義
 // ---------------------------------------------------------------------------
@@ -233,7 +287,7 @@ fn attach_xdp(program: &mut Xdp, iface: &str) -> Result<XdpLinkId, String> {
 // ---------------------------------------------------------------------------
 
 async fn run_ebpf_capture(
-    event_tx: broadcast::Sender<CapturedPacketBatch>,
+    event_tx: broadcast::Sender<CapturedPacketEnvelope>,
     mut cmd_rx: mpsc::Receiver<EbpfCommand>,
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
@@ -338,6 +392,9 @@ async fn run_ebpf_capture(
     // 送信側を閉じる（全CPUリーダーがcloneを保持）
     drop(tx);
 
+    let initial_offset_cache = EpochOffsetCache::new()
+        .map_err(|e| CaptureError::Other(format!("Failed to initialize epoch offset: {}", e)))?;
+
     // 相関タスク: XDP と kfree_skb イベントを突き合わせる
     let correlation_event_tx = event_tx.clone();
     let correlation_is_running = Arc::clone(&is_running);
@@ -346,11 +403,12 @@ async fn run_ebpf_capture(
     let correlation_session_id = session_id;
 
     tokio::spawn(async move {
+        let mut offset_cache = initial_offset_cache;
         let mut pending: HashMap<FiveTuple, PendingPacket> = HashMap::new();
         let mut timeout_interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
         let mut batch_flush_interval =
             tokio::time::interval(tokio::time::Duration::from_millis(BATCH_FLUSH_INTERVAL_MS));
-        let mut out_batch: CapturedPacketBatch = Vec::with_capacity(BATCH_MAX_SIZE);
+        let mut out_batch: Vec<CapturedPacket> = Vec::with_capacity(BATCH_MAX_SIZE);
         const TIMEOUT_MS: u128 = 50;
 
         loop {
@@ -384,7 +442,11 @@ async fn run_ebpf_capture(
                                     update_stats(&correlation_stats, &captured.result);
                                     out_batch.push(captured);
                                     if out_batch.len() >= BATCH_MAX_SIZE {
-                                        flush_captured_batch(&correlation_event_tx, &mut out_batch);
+                                        flush_captured_batch(
+                                            &correlation_event_tx,
+                                            &mut out_batch,
+                                            offset_cache.current_offset_ms(),
+                                        );
                                     }
                                 }
                                 // pending にマッチしない kfree_skb イベントは破棄する
@@ -418,18 +480,30 @@ async fn run_ebpf_capture(
                             update_stats(&correlation_stats, &captured.result);
                             out_batch.push(captured);
                             if out_batch.len() >= BATCH_MAX_SIZE {
-                                flush_captured_batch(&correlation_event_tx, &mut out_batch);
+                                flush_captured_batch(
+                                    &correlation_event_tx,
+                                    &mut out_batch,
+                                    offset_cache.current_offset_ms(),
+                                );
                             }
                         }
                     }
                 }
                 _ = batch_flush_interval.tick() => {
-                    flush_captured_batch(&correlation_event_tx, &mut out_batch);
+                    flush_captured_batch(
+                        &correlation_event_tx,
+                        &mut out_batch,
+                        offset_cache.current_offset_ms(),
+                    );
                 }
             }
         }
 
-        flush_captured_batch(&correlation_event_tx, &mut out_batch);
+        flush_captured_batch(
+            &correlation_event_tx,
+            &mut out_batch,
+            offset_cache.current_offset_ms(),
+        );
     });
 
     // コマンドループ: attach/detach コマンドを受信して処理
@@ -542,14 +616,18 @@ fn update_stats(stats: &std::sync::Mutex<CaptureStats>, result: &PacketResult) {
 }
 
 fn flush_captured_batch(
-    tx: &broadcast::Sender<CapturedPacketBatch>,
-    out_batch: &mut CapturedPacketBatch,
+    tx: &broadcast::Sender<CapturedPacketEnvelope>,
+    out_batch: &mut Vec<CapturedPacket>,
+    epoch_offset_ms: f64,
 ) {
     if out_batch.is_empty() {
         return;
     }
-    let batch = std::mem::take(out_batch);
-    let _ = tx.send(batch);
+    let packets = std::mem::take(out_batch);
+    let _ = tx.send(CapturedPacketEnvelope {
+        packets,
+        epoch_offset_ms,
+    });
 }
 
 fn convert_event(
@@ -579,9 +657,47 @@ fn convert_event(
         destination,
         dest_port: event.dst_port,
         target_port: None,
-        timestamp: chrono::Utc::now().timestamp_millis(),
+        capture_mono_ns: event.ktime_ns,
         reason,
     };
 
     CapturedPacket { packet, result }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calculate_epoch_offset_ms_returns_finite_value() {
+        let offset = calculate_epoch_offset_ms().expect("offset should be available");
+        assert!(offset.is_finite());
+    }
+
+    #[test]
+    fn epoch_offset_cache_refreshes_after_interval() {
+        let mut cache = EpochOffsetCache::new().expect("cache should initialize");
+        let initial_refresh = cache.last_refresh;
+        cache.last_refresh = Instant::now() - OFFSET_REFRESH_INTERVAL - Duration::from_secs(1);
+        let _ = cache.current_offset_ms();
+        assert!(cache.last_refresh > initial_refresh);
+    }
+
+    #[test]
+    fn convert_event_sets_capture_mono_ns() {
+        let event = PacketEvent {
+            src_addr: u32::from_be_bytes([192, 168, 0, 1]),
+            dst_addr: u32::from_be_bytes([10, 0, 0, 1]),
+            src_port: 12345,
+            dst_port: 443,
+            protocol: 6,
+            _padding: [0; 3],
+            pkt_len: 128,
+            action: ACTION_XDP_PASS,
+            drop_reason: 0,
+            ktime_ns: 42,
+        };
+        let captured = convert_event(&event, "sess01", 7, PacketResult::Delivered, None);
+        assert_eq!(captured.packet.capture_mono_ns, 42);
+    }
 }

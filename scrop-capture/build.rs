@@ -23,6 +23,14 @@ fn build_ebpf() {
         "cargo:rerun-if-changed={}",
         ebpf_src_dir.join("vmlinux.h").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        project_root
+            .join("scrop-common")
+            .join("src")
+            .join("lib.rs")
+            .display()
+    );
 
     let status = Command::new("clang")
         .args([

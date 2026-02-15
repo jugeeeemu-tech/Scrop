@@ -33,6 +33,7 @@ export const scrop = $root.scrop = (() => {
              * @interface IPacketBatchEnvelope
              * @property {number|null} [schemaVersion] PacketBatchEnvelope schemaVersion
              * @property {Array.<scrop.packet.ICapturedPacket>|null} [packets] PacketBatchEnvelope packets
+             * @property {number|null} [epochOffsetMs] PacketBatchEnvelope epochOffsetMs
              */
 
             /**
@@ -68,6 +69,14 @@ export const scrop = $root.scrop = (() => {
             PacketBatchEnvelope.prototype.packets = $util.emptyArray;
 
             /**
+             * PacketBatchEnvelope epochOffsetMs.
+             * @member {number} epochOffsetMs
+             * @memberof scrop.packet.PacketBatchEnvelope
+             * @instance
+             */
+            PacketBatchEnvelope.prototype.epochOffsetMs = 0;
+
+            /**
              * Creates a new PacketBatchEnvelope instance using the specified properties.
              * @function create
              * @memberof scrop.packet.PacketBatchEnvelope
@@ -96,6 +105,8 @@ export const scrop = $root.scrop = (() => {
                 if (message.packets != null && message.packets.length)
                     for (let i = 0; i < message.packets.length; ++i)
                         $root.scrop.packet.CapturedPacket.encode(message.packets[i], writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
+                if (message.epochOffsetMs != null && Object.hasOwnProperty.call(message, "epochOffsetMs"))
+                    writer.uint32(/* id 3, wireType 1 =*/25).double(message.epochOffsetMs);
                 return writer;
             };
 
@@ -140,6 +151,10 @@ export const scrop = $root.scrop = (() => {
                             if (!(message.packets && message.packets.length))
                                 message.packets = [];
                             message.packets.push($root.scrop.packet.CapturedPacket.decode(reader, reader.uint32()));
+                            break;
+                        }
+                    case 3: {
+                            message.epochOffsetMs = reader.double();
                             break;
                         }
                     default:
@@ -189,6 +204,9 @@ export const scrop = $root.scrop = (() => {
                             return "packets." + error;
                     }
                 }
+                if (message.epochOffsetMs != null && message.hasOwnProperty("epochOffsetMs"))
+                    if (typeof message.epochOffsetMs !== "number")
+                        return "epochOffsetMs: number expected";
                 return null;
             };
 
@@ -216,6 +234,8 @@ export const scrop = $root.scrop = (() => {
                         message.packets[i] = $root.scrop.packet.CapturedPacket.fromObject(object.packets[i]);
                     }
                 }
+                if (object.epochOffsetMs != null)
+                    message.epochOffsetMs = Number(object.epochOffsetMs);
                 return message;
             };
 
@@ -234,8 +254,10 @@ export const scrop = $root.scrop = (() => {
                 let object = {};
                 if (options.arrays || options.defaults)
                     object.packets = [];
-                if (options.defaults)
+                if (options.defaults) {
                     object.schemaVersion = 0;
+                    object.epochOffsetMs = 0;
+                }
                 if (message.schemaVersion != null && message.hasOwnProperty("schemaVersion"))
                     object.schemaVersion = message.schemaVersion;
                 if (message.packets && message.packets.length) {
@@ -243,6 +265,8 @@ export const scrop = $root.scrop = (() => {
                     for (let j = 0; j < message.packets.length; ++j)
                         object.packets[j] = $root.scrop.packet.CapturedPacket.toObject(message.packets[j], options);
                 }
+                if (message.epochOffsetMs != null && message.hasOwnProperty("epochOffsetMs"))
+                    object.epochOffsetMs = options.json && !isFinite(message.epochOffsetMs) ? String(message.epochOffsetMs) : message.epochOffsetMs;
                 return object;
             };
 
@@ -552,7 +576,6 @@ export const scrop = $root.scrop = (() => {
              * @property {string|null} [destination] AnimatingPacket destination
              * @property {number|null} [destPort] AnimatingPacket destPort
              * @property {number|null} [targetPort] AnimatingPacket targetPort
-             * @property {number|null} [timestamp] AnimatingPacket timestamp
              * @property {string|null} [reason] AnimatingPacket reason
              * @property {number|null} [captureMonoNs] AnimatingPacket captureMonoNs
              */
@@ -637,14 +660,6 @@ export const scrop = $root.scrop = (() => {
             AnimatingPacket.prototype.targetPort = null;
 
             /**
-             * AnimatingPacket timestamp.
-             * @member {number} timestamp
-             * @memberof scrop.packet.AnimatingPacket
-             * @instance
-             */
-            AnimatingPacket.prototype.timestamp = 0;
-
-            /**
              * AnimatingPacket reason.
              * @member {string|null|undefined} reason
              * @memberof scrop.packet.AnimatingPacket
@@ -654,11 +669,11 @@ export const scrop = $root.scrop = (() => {
 
             /**
              * AnimatingPacket captureMonoNs.
-             * @member {number|null|undefined} captureMonoNs
+             * @member {number} captureMonoNs
              * @memberof scrop.packet.AnimatingPacket
              * @instance
              */
-            AnimatingPacket.prototype.captureMonoNs = null;
+            AnimatingPacket.prototype.captureMonoNs = 0;
 
             // OneOf field names bound to virtual getters and setters
             let $oneOfFields;
@@ -672,12 +687,6 @@ export const scrop = $root.scrop = (() => {
             // Virtual OneOf for proto3 optional field
             Object.defineProperty(AnimatingPacket.prototype, "_reason", {
                 get: $util.oneOfGetter($oneOfFields = ["reason"]),
-                set: $util.oneOfSetter($oneOfFields)
-            });
-
-            // Virtual OneOf for proto3 optional field
-            Object.defineProperty(AnimatingPacket.prototype, "_captureMonoNs", {
-                get: $util.oneOfGetter($oneOfFields = ["captureMonoNs"]),
                 set: $util.oneOfSetter($oneOfFields)
             });
 
@@ -721,8 +730,6 @@ export const scrop = $root.scrop = (() => {
                     writer.uint32(/* id 7, wireType 0 =*/56).uint32(message.destPort);
                 if (message.targetPort != null && Object.hasOwnProperty.call(message, "targetPort"))
                     writer.uint32(/* id 8, wireType 0 =*/64).uint32(message.targetPort);
-                if (message.timestamp != null && Object.hasOwnProperty.call(message, "timestamp"))
-                    writer.uint32(/* id 9, wireType 1 =*/73).double(message.timestamp);
                 if (message.reason != null && Object.hasOwnProperty.call(message, "reason"))
                     writer.uint32(/* id 10, wireType 2 =*/82).string(message.reason);
                 if (message.captureMonoNs != null && Object.hasOwnProperty.call(message, "captureMonoNs"))
@@ -793,10 +800,6 @@ export const scrop = $root.scrop = (() => {
                         }
                     case 8: {
                             message.targetPort = reader.uint32();
-                            break;
-                        }
-                    case 9: {
-                            message.timestamp = reader.double();
                             break;
                         }
                     case 10: {
@@ -875,19 +878,14 @@ export const scrop = $root.scrop = (() => {
                     if (!$util.isInteger(message.targetPort))
                         return "targetPort: integer expected";
                 }
-                if (message.timestamp != null && message.hasOwnProperty("timestamp"))
-                    if (typeof message.timestamp !== "number")
-                        return "timestamp: number expected";
                 if (message.reason != null && message.hasOwnProperty("reason")) {
                     properties._reason = 1;
                     if (!$util.isString(message.reason))
                         return "reason: string expected";
                 }
-                if (message.captureMonoNs != null && message.hasOwnProperty("captureMonoNs")) {
-                    properties._captureMonoNs = 1;
+                if (message.captureMonoNs != null && message.hasOwnProperty("captureMonoNs"))
                     if (typeof message.captureMonoNs !== "number")
                         return "captureMonoNs: number expected";
-                }
                 return null;
             };
 
@@ -937,8 +935,6 @@ export const scrop = $root.scrop = (() => {
                     message.destPort = object.destPort >>> 0;
                 if (object.targetPort != null)
                     message.targetPort = object.targetPort >>> 0;
-                if (object.timestamp != null)
-                    message.timestamp = Number(object.timestamp);
                 if (object.reason != null)
                     message.reason = String(object.reason);
                 if (object.captureMonoNs != null)
@@ -967,7 +963,7 @@ export const scrop = $root.scrop = (() => {
                     object.srcPort = 0;
                     object.destination = "";
                     object.destPort = 0;
-                    object.timestamp = 0;
+                    object.captureMonoNs = 0;
                 }
                 if (message.id != null && message.hasOwnProperty("id"))
                     object.id = message.id;
@@ -988,18 +984,13 @@ export const scrop = $root.scrop = (() => {
                     if (options.oneofs)
                         object._targetPort = "targetPort";
                 }
-                if (message.timestamp != null && message.hasOwnProperty("timestamp"))
-                    object.timestamp = options.json && !isFinite(message.timestamp) ? String(message.timestamp) : message.timestamp;
                 if (message.reason != null && message.hasOwnProperty("reason")) {
                     object.reason = message.reason;
                     if (options.oneofs)
                         object._reason = "reason";
                 }
-                if (message.captureMonoNs != null && message.hasOwnProperty("captureMonoNs")) {
+                if (message.captureMonoNs != null && message.hasOwnProperty("captureMonoNs"))
                     object.captureMonoNs = options.json && !isFinite(message.captureMonoNs) ? String(message.captureMonoNs) : message.captureMonoNs;
-                    if (options.oneofs)
-                        object._captureMonoNs = "captureMonoNs";
-                }
                 return object;
             };
 

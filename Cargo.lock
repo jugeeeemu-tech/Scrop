@@ -3529,6 +3529,7 @@ dependencies = [
  "aya",
  "bytes",
  "chrono",
+ "libc",
  "rand 0.9.2",
  "scrop-common",
  "serde",
