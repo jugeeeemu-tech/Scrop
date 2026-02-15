@@ -1,0 +1,4 @@
+interface:
+  display_name: "Microbenchmark Runner"
+  short_description: "Run deterministic synthetic performance microbenchmarks."
+  default_prompt: "Use $perf-microbench to benchmark an internal path with repeatable synthetic workloads."

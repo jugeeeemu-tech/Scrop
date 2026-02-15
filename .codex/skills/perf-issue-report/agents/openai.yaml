@@ -1,0 +1,4 @@
+interface:
+  display_name: "Perf Report Writer"
+  short_description: "Turn benchmark artifacts into clear issue comments."
+  default_prompt: "Use $perf-issue-report to summarize benchmark results for an Issue or PR."

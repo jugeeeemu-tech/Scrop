@@ -1,0 +1,4 @@
+interface:
+  display_name: "Normal Traffic Perf"
+  short_description: "Measure performance on production-like traffic windows."
+  default_prompt: "Use $perf-normal-traffic to design and run long-window production-like performance comparisons."
