@@ -133,6 +133,7 @@ pub struct CaptureStats {
     pub nic_dropped: u64,
     pub fw_dropped: u64,
     pub delivered: u64,
+    pub transport_dropped: u64,
 }
 
 #[cfg(test)]
@@ -238,6 +239,7 @@ mod tests {
         assert_eq!(stats.nic_dropped, 0);
         assert_eq!(stats.fw_dropped, 0);
         assert_eq!(stats.delivered, 0);
+        assert_eq!(stats.transport_dropped, 0);
     }
 
     #[test]

@@ -1,16 +1,16 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::io::unix::AsyncFd;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use aya::maps::{AsyncPerfEventArray, HashMap as AyaHashMap};
+use aya::maps::{HashMap as AyaHashMap, MapData, PerCpuArray, RingBuf};
 use aya::programs::xdp::XdpLinkId;
 use aya::programs::{TracePoint, Xdp, XdpFlags};
-use aya::util::online_cpus;
 use aya::{Btf, EbpfLoader};
-use bytes::BytesMut;
 use tracing::{error, info, warn};
 
 use crate::types::{
@@ -32,6 +32,9 @@ static EBPF_ELF_ALIGNED: &AlignedBytes<
 > = &AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")));
 static EBPF_ELF: &[u8] = &EBPF_ELF_ALIGNED.0;
 const OFFSET_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const RINGBUF_DROPS_MAP_KEY: u32 = 0;
+const RINGBUF_DROP_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const RINGBUF_DRAIN_LIMIT: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // コマンドチャネル
@@ -332,64 +335,81 @@ async fn run_ebpf_capture(
 
     info!("kfree_skb tracepoint attached");
 
-    // Perf イベントのセットアップ
-    let mut perf_array: AsyncPerfEventArray<_> = ebpf
+    // ring buffer のセットアップ
+    let ring_buf: RingBuf<_> = ebpf
         .take_map("EVENTS")
         .ok_or_else(|| CaptureError::EbpfLoadFailed("EVENTS map not found".into()))?
         .try_into()
         .map_err(|e: aya::maps::MapError| CaptureError::EbpfLoadFailed(e.to_string()))?;
+    let mut ring_buf_fd = AsyncFd::new(ring_buf).map_err(|e| {
+        CaptureError::Other(format!("Failed to create ring buffer async fd: {}", e))
+    })?;
 
-    let cpus = online_cpus()
-        .map_err(|e| CaptureError::Other(format!("Failed to get online CPUs: {:?}", e)))?;
+    let ringbuf_drops: PerCpuArray<_, u64> = ebpf
+        .take_map("RINGBUF_DROPS")
+        .ok_or_else(|| CaptureError::EbpfLoadFailed("RINGBUF_DROPS map not found".into()))?
+        .try_into()
+        .map_err(|e: aya::maps::MapError| CaptureError::EbpfLoadFailed(e.to_string()))?;
 
     // イベント相関用チャネル
     let (tx, mut rx) = mpsc::channel::<(PacketEvent, u64)>(4096);
 
-    // CPUごとにリーダーを起動 → チャネルに送信
-    for cpu_id in cpus {
-        let mut buf = perf_array.open(cpu_id, None).map_err(|e| {
-            CaptureError::Other(format!(
-                "Failed to open perf buffer for CPU {}: {}",
-                cpu_id, e
-            ))
-        })?;
+    // ring buffer リーダーを起動 → チャネルに送信
+    let is_running_reader = Arc::clone(&is_running);
+    let packet_counter_reader = Arc::clone(&packet_counter);
+    let tx_reader = tx.clone();
+    tokio::spawn(async move {
+        while is_running_reader.load(Ordering::SeqCst) {
+            let mut drained: Vec<(PacketEvent, u64)> = Vec::with_capacity(256);
+            let mut should_clear_ready = true;
 
-        let is_running = Arc::clone(&is_running);
-        let packet_counter = Arc::clone(&packet_counter);
-        let tx = tx.clone();
-
-        tokio::spawn(async move {
-            let mut buffers = (0..10)
-                .map(|_| BytesMut::with_capacity(std::mem::size_of::<PacketEvent>()))
-                .collect::<Vec<_>>();
-
-            while is_running.load(Ordering::SeqCst) {
-                let events = match buf.read_events(&mut buffers).await {
-                    Ok(events) => events,
-                    Err(e) => {
-                        warn!(cpu_id, error = %e, "error reading perf events");
+            let mut guard =
+                match tokio::time::timeout(Duration::from_millis(100), ring_buf_fd.readable_mut())
+                    .await
+                {
+                    Ok(Ok(g)) => g,
+                    Ok(Err(e)) => {
+                        warn!(error = %e, "ring buffer became unreadable");
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    }
+                    Err(_) => {
                         continue;
                     }
                 };
 
-                for i in 0..events.read {
-                    let event_buf = &buffers[i];
-                    if event_buf.len() < std::mem::size_of::<PacketEvent>() {
-                        continue;
-                    }
+            loop {
+                let Some(item) = guard.get_inner_mut().next() else {
+                    break;
+                };
+                if item.len() < std::mem::size_of::<PacketEvent>() {
+                    continue;
+                }
 
-                    let event: PacketEvent = unsafe {
-                        std::ptr::read_unaligned(event_buf.as_ptr() as *const PacketEvent)
-                    };
-
-                    let counter = packet_counter.fetch_add(1, Ordering::SeqCst);
-                    let _ = tx.send((event, counter)).await;
+                let event: PacketEvent =
+                    unsafe { std::ptr::read_unaligned(item.as_ptr() as *const PacketEvent) };
+                let counter = packet_counter_reader.fetch_add(1, Ordering::SeqCst);
+                drained.push((event, counter));
+                if drained.len() >= RINGBUF_DRAIN_LIMIT {
+                    should_clear_ready = false;
+                    break;
                 }
             }
-        });
-    }
 
-    // 送信側を閉じる（全CPUリーダーがcloneを保持）
+            if should_clear_ready {
+                guard.clear_ready();
+            }
+            drop(guard);
+
+            for payload in drained {
+                if tx_reader.send(payload).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    // 送信側を閉じる（リーダーがcloneを保持）
     drop(tx);
 
     let initial_offset_cache = EpochOffsetCache::new()
@@ -506,6 +526,9 @@ async fn run_ebpf_capture(
         );
     });
 
+    let mut ringbuf_drop_refresh = tokio::time::interval(RINGBUF_DROP_REFRESH_INTERVAL);
+    ringbuf_drop_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     // コマンドループ: attach/detach コマンドを受信して処理
     while is_running.load(Ordering::SeqCst) {
         tokio::select! {
@@ -522,11 +545,16 @@ async fn run_ebpf_capture(
                     None => break, // チャネル閉鎖 = stop
                 }
             }
+            _ = ringbuf_drop_refresh.tick() => {
+                refresh_transport_dropped_stats(&stats, &ringbuf_drops);
+            }
             _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                 // 定期的に is_running をチェック
             }
         }
     }
+
+    refresh_transport_dropped_stats(&stats, &ringbuf_drops);
 
     // ebpfがdropされるとXDPプログラム・トレースポイントは自動的にデタッチされる
     let iface_names: Vec<&str> = attached.keys().map(|s| s.as_str()).collect();
@@ -612,6 +640,21 @@ fn update_stats(stats: &std::sync::Mutex<CaptureStats>, result: &PacketResult) {
         PacketResult::Delivered => s.delivered += 1,
         PacketResult::NicDrop => s.nic_dropped += 1,
         PacketResult::FwDrop => s.fw_dropped += 1,
+    }
+}
+
+fn refresh_transport_dropped_stats<T: Borrow<MapData>>(
+    stats: &std::sync::Mutex<CaptureStats>,
+    ringbuf_drops: &PerCpuArray<T, u64>,
+) {
+    match ringbuf_drops.get(&RINGBUF_DROPS_MAP_KEY, 0) {
+        Ok(per_cpu_values) => {
+            let total = per_cpu_values.iter().copied().sum::<u64>();
+            stats.lock().unwrap().transport_dropped = total;
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to read RINGBUF_DROPS");
+        }
     }
 }
 
