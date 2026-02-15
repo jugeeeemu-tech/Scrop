@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -32,6 +32,10 @@ static EBPF_ELF_ALIGNED: &AlignedBytes<
 > = &AlignedBytes(*include_bytes!(concat!(env!("OUT_DIR"), "/scrop-ebpf")));
 static EBPF_ELF: &[u8] = &EBPF_ELF_ALIGNED.0;
 const OFFSET_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const CORRELATION_BUCKET_MS: u64 = 5;
+const CORRELATION_TIMEOUT_MS: u64 = 50;
+const SEARCH_BUCKET_RADIUS: u64 = 1;
+const WHEEL_SLOTS: usize = 64;
 
 // ---------------------------------------------------------------------------
 // コマンドチャネル
@@ -231,16 +235,17 @@ impl EpochOffsetCache {
 // 相関ロジック用の型定義
 // ---------------------------------------------------------------------------
 
-#[derive(Hash, Eq, PartialEq, Clone)]
-struct FiveTuple {
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+struct FlowSizeKey {
     src_addr: u32,
     dst_addr: u32,
     src_port: u16,
     dst_port: u16,
     protocol: u8,
+    size: u32,
 }
 
-impl FiveTuple {
+impl FlowSizeKey {
     fn from_event(event: &PacketEvent) -> Self {
         Self {
             src_addr: event.src_addr,
@@ -248,6 +253,7 @@ impl FiveTuple {
             src_port: event.src_port,
             dst_port: event.dst_port,
             protocol: event.protocol,
+            size: event.pkt_len,
         }
     }
 }
@@ -256,6 +262,212 @@ struct PendingPacket {
     event: PacketEvent,
     counter: u64,
     received_at: Instant,
+}
+
+#[derive(Default)]
+struct BucketSlot {
+    epoch_bucket: Option<u64>,
+    by_key: HashMap<FlowSizeKey, VecDeque<PendingPacket>>,
+}
+
+struct Correlator {
+    base_instant: Instant,
+    wheel: Vec<BucketSlot>,
+}
+
+impl Correlator {
+    fn new(base_instant: Instant) -> Self {
+        Self {
+            base_instant,
+            wheel: (0..WHEEL_SLOTS).map(|_| BucketSlot::default()).collect(),
+        }
+    }
+
+    fn bucket_of(&self, now: Instant) -> u64 {
+        let elapsed_ms = now.saturating_duration_since(self.base_instant).as_millis();
+        (elapsed_ms as u64) / CORRELATION_BUCKET_MS
+    }
+
+    fn register_pass(&mut self, event: PacketEvent, counter: u64, now: Instant) {
+        let bucket = self.bucket_of(now);
+        let key = FlowSizeKey::from_event(&event);
+        let slot = self.slot_for_write(bucket);
+        slot.by_key.entry(key).or_default().push_back(PendingPacket {
+            event,
+            counter,
+            received_at: now,
+        });
+    }
+
+    fn match_kfree(&mut self, event: &PacketEvent, now: Instant) -> Option<PendingPacket> {
+        let key = FlowSizeKey::from_event(event);
+        let now_bucket = self.bucket_of(now);
+        let search_buckets = Self::search_buckets(now_bucket);
+
+        let mut best: Option<(u64, usize, Duration)> = None;
+        for (bucket_order, bucket) in search_buckets.into_iter().enumerate() {
+            let Some(slot) = self.slot_for_epoch(bucket) else {
+                continue;
+            };
+            let Some(queue) = slot.by_key.get(&key) else {
+                continue;
+            };
+            let Some(candidate) = queue.back() else {
+                continue;
+            };
+
+            // register_pass は push_back なので queue は受信時刻昇順を保つ。
+            // 相関時点では now >= received_at を満たすため、最短距離候補は末尾でよい。
+            let distance = instant_distance(candidate.received_at, now);
+            match &mut best {
+                None => best = Some((bucket, bucket_order, distance)),
+                Some((best_bucket, best_order, best_dist)) => {
+                    if distance < *best_dist || (distance == *best_dist && bucket_order < *best_order)
+                    {
+                        *best_bucket = bucket;
+                        *best_order = bucket_order;
+                        *best_dist = distance;
+                    }
+                }
+            }
+        }
+
+        let (bucket, _, _) = best?;
+        let slot = self.slot_for_epoch_mut(bucket)?;
+        let mut remove_key = false;
+        let removed = if let Some(queue) = slot.by_key.get_mut(&key) {
+            let removed = pop_latest_nearest_with_fifo_tie(queue);
+            remove_key = queue.is_empty();
+            removed
+        } else {
+            None
+        };
+
+        if remove_key {
+            slot.by_key.remove(&key);
+        }
+
+        removed
+    }
+
+    fn drain_expired(&mut self, now: Instant) -> Vec<PendingPacket> {
+        let now_bucket = self.bucket_of(now);
+        let timeout_buckets = CORRELATION_TIMEOUT_MS / CORRELATION_BUCKET_MS;
+        let expire_bucket = now_bucket.saturating_sub(timeout_buckets);
+        let mut drained = Vec::new();
+
+        for slot in &mut self.wheel {
+            let Some(epoch_bucket) = slot.epoch_bucket else {
+                continue;
+            };
+            if epoch_bucket > expire_bucket {
+                continue;
+            }
+
+            for queue in slot.by_key.values_mut() {
+                while let Some(pending) = queue.pop_front() {
+                    drained.push(pending);
+                }
+            }
+            slot.by_key.clear();
+            slot.epoch_bucket = None;
+        }
+
+        drained
+    }
+
+    fn is_empty(&self) -> bool {
+        self.wheel.iter().all(|slot| slot.by_key.is_empty())
+    }
+
+    #[cfg(test)]
+    fn pending_len(&self) -> usize {
+        self.wheel
+            .iter()
+            .map(|slot| slot.by_key.values().map(VecDeque::len).sum::<usize>())
+            .sum()
+    }
+
+    fn search_buckets(center: u64) -> Vec<u64> {
+        let mut buckets = Vec::with_capacity(1 + (SEARCH_BUCKET_RADIUS as usize) * 2);
+        buckets.push(center);
+        for offset in 1..=SEARCH_BUCKET_RADIUS {
+            let prev = center.saturating_sub(offset);
+            if !buckets.contains(&prev) {
+                buckets.push(prev);
+            }
+            let next = center.saturating_add(offset);
+            if !buckets.contains(&next) {
+                buckets.push(next);
+            }
+        }
+        buckets
+    }
+
+    fn slot_for_write(&mut self, bucket: u64) -> &mut BucketSlot {
+        let slot = &mut self.wheel[Self::slot_index(bucket)];
+        if slot.epoch_bucket != Some(bucket) {
+            slot.epoch_bucket = Some(bucket);
+            slot.by_key.clear();
+        }
+        slot
+    }
+
+    fn slot_for_epoch(&self, bucket: u64) -> Option<&BucketSlot> {
+        let slot = &self.wheel[Self::slot_index(bucket)];
+        if slot.epoch_bucket == Some(bucket) {
+            Some(slot)
+        } else {
+            None
+        }
+    }
+
+    fn slot_for_epoch_mut(&mut self, bucket: u64) -> Option<&mut BucketSlot> {
+        let slot = &mut self.wheel[Self::slot_index(bucket)];
+        if slot.epoch_bucket == Some(bucket) {
+            Some(slot)
+        } else {
+            None
+        }
+    }
+
+    fn slot_index(bucket: u64) -> usize {
+        (bucket % WHEEL_SLOTS as u64) as usize
+    }
+}
+
+fn pop_latest_nearest_with_fifo_tie(queue: &mut VecDeque<PendingPacket>) -> Option<PendingPacket> {
+    let latest_ts = queue.back()?.received_at;
+    if queue.len() == 1 {
+        return queue.pop_back();
+    }
+
+    // 末尾が単独時刻なら O(1) で取り出す。
+    if queue
+        .get(queue.len().saturating_sub(2))
+        .is_some_and(|prev| prev.received_at != latest_ts)
+    {
+        return queue.pop_back();
+    }
+
+    // 同時刻 group は FIFO（先頭優先）で取り出す。
+    let mut idx = queue.len() - 1;
+    while idx > 0
+        && queue
+            .get(idx - 1)
+            .is_some_and(|prev| prev.received_at == latest_ts)
+    {
+        idx -= 1;
+    }
+    queue.remove(idx)
+}
+
+fn instant_distance(a: Instant, b: Instant) -> Duration {
+    if a >= b {
+        a.duration_since(b)
+    } else {
+        b.duration_since(a)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -404,33 +616,29 @@ async fn run_ebpf_capture(
 
     tokio::spawn(async move {
         let mut offset_cache = initial_offset_cache;
-        let mut pending: HashMap<FiveTuple, PendingPacket> = HashMap::new();
+        let mut correlator = Correlator::new(Instant::now());
+        let mut events_closed = false;
         let mut timeout_interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
         let mut batch_flush_interval =
             tokio::time::interval(tokio::time::Duration::from_millis(BATCH_FLUSH_INTERVAL_MS));
         let mut out_batch: Vec<CapturedPacket> = Vec::with_capacity(BATCH_MAX_SIZE);
-        const TIMEOUT_MS: u128 = 50;
 
         loop {
             tokio::select! {
-                recv = rx.recv() => {
+                recv = rx.recv(), if !events_closed => {
                     match recv {
                         Some((event, counter)) => {
-                            let tuple = FiveTuple::from_event(&event);
+                            let now = Instant::now();
 
                             if event.action == ACTION_XDP_PASS {
                                 // XDP PASS → pending に格納
-                                pending.insert(tuple, PendingPacket {
-                                    event,
-                                    counter,
-                                    received_at: Instant::now(),
-                                });
+                                correlator.register_pass(event, counter, now);
                             } else if event.action == ACTION_KFREE_SKB {
-                                // kfree_skb → pending から 5-tuple でマッチ検索
+                                // kfree_skb → pending から flow+size+time-bucket で相関
                                 let result = correlation_resolver.classify_drop(event.drop_reason);
                                 let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
 
-                                if let Some(p) = pending.remove(&tuple) {
+                                if let Some(p) = correlator.match_kfree(&event, now) {
                                     // XDP で見たパケットがドロップされた
                                     let captured = convert_event(
                                         &p.event,
@@ -452,40 +660,36 @@ async fn run_ebpf_capture(
                                 // pending にマッチしない kfree_skb イベントは破棄する
                             }
                         }
-                        None => break, // チャネル閉鎖
+                        None => {
+                            // 受信クローズ後も pending を timeout 処理で flush する
+                            events_closed = true;
+                        }
                     }
                 }
                 _ = timeout_interval.tick() => {
-                    if !correlation_is_running.load(Ordering::SeqCst) && pending.is_empty() {
+                    if (!correlation_is_running.load(Ordering::SeqCst) || events_closed)
+                        && correlator.is_empty()
+                    {
                         break;
                     }
 
                     // タイムアウト: 50ms 超過の pending パケットを Delivered として emit
-                    let now = Instant::now();
-                    let expired: Vec<FiveTuple> = pending
-                        .iter()
-                        .filter(|(_, p)| now.duration_since(p.received_at).as_millis() > TIMEOUT_MS)
-                        .map(|(k, _)| k.clone())
-                        .collect();
-
-                    for key in expired {
-                        if let Some(p) = pending.remove(&key) {
-                            let captured = convert_event(
-                                &p.event,
-                                &correlation_session_id,
-                                p.counter,
-                                PacketResult::Delivered,
-                                None,
+                    for p in correlator.drain_expired(Instant::now()) {
+                        let captured = convert_event(
+                            &p.event,
+                            &correlation_session_id,
+                            p.counter,
+                            PacketResult::Delivered,
+                            None,
+                        );
+                        update_stats(&correlation_stats, &captured.result);
+                        out_batch.push(captured);
+                        if out_batch.len() >= BATCH_MAX_SIZE {
+                            flush_captured_batch(
+                                &correlation_event_tx,
+                                &mut out_batch,
+                                offset_cache.current_offset_ms(),
                             );
-                            update_stats(&correlation_stats, &captured.result);
-                            out_batch.push(captured);
-                            if out_batch.len() >= BATCH_MAX_SIZE {
-                                flush_captured_batch(
-                                    &correlation_event_tx,
-                                    &mut out_batch,
-                                    offset_cache.current_offset_ms(),
-                                );
-                            }
                         }
                     }
                 }
@@ -668,6 +872,25 @@ fn convert_event(
 mod tests {
     use super::*;
 
+    fn sample_event(pkt_len: u32, action: u32) -> PacketEvent {
+        PacketEvent {
+            src_addr: u32::from_be_bytes([192, 168, 0, 1]),
+            dst_addr: u32::from_be_bytes([10, 0, 0, 1]),
+            src_port: 12345,
+            dst_port: 443,
+            protocol: 6,
+            _padding: [0; 3],
+            pkt_len,
+            action,
+            drop_reason: 0,
+            ktime_ns: 42,
+        }
+    }
+
+    fn at_ms(base: Instant, ms: u64) -> Instant {
+        base + Duration::from_millis(ms)
+    }
+
     #[test]
     fn calculate_epoch_offset_ms_returns_finite_value() {
         let offset = calculate_epoch_offset_ms().expect("offset should be available");
@@ -699,5 +922,97 @@ mod tests {
         };
         let captured = convert_event(&event, "sess01", 7, PacketResult::Delivered, None);
         assert_eq!(captured.packet.capture_mono_ns, 42);
+    }
+
+    #[test]
+    fn correlator_preserves_multiple_pending_for_same_flow_and_size() {
+        let base = Instant::now();
+        let mut correlator = Correlator::new(base);
+        let pass_event = sample_event(128, ACTION_XDP_PASS);
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+
+        correlator.register_pass(pass_event, 1, at_ms(base, 1));
+        correlator.register_pass(pass_event, 2, at_ms(base, 2));
+        correlator.register_pass(pass_event, 3, at_ms(base, 3));
+
+        assert_eq!(correlator.pending_len(), 3);
+        let matched = correlator
+            .match_kfree(&kfree_event, at_ms(base, 4))
+            .expect("expected a correlated packet");
+        assert_eq!(matched.counter, 3);
+        assert_eq!(correlator.pending_len(), 2);
+    }
+
+    #[test]
+    fn correlator_prevents_mismatch_when_size_differs() {
+        let base = Instant::now();
+        let mut correlator = Correlator::new(base);
+        let pass_event = sample_event(128, ACTION_XDP_PASS);
+        let kfree_event = sample_event(256, ACTION_KFREE_SKB);
+
+        correlator.register_pass(pass_event, 1, at_ms(base, 1));
+
+        assert!(correlator.match_kfree(&kfree_event, at_ms(base, 2)).is_none());
+        assert_eq!(correlator.pending_len(), 1);
+    }
+
+    #[test]
+    fn correlator_matches_across_bucket_boundary() {
+        let base = Instant::now();
+        let mut correlator = Correlator::new(base);
+        let pass_event = sample_event(128, ACTION_XDP_PASS);
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+
+        correlator.register_pass(pass_event, 1, at_ms(base, 4));
+        let matched = correlator.match_kfree(&kfree_event, at_ms(base, 6));
+
+        assert!(matched.is_some());
+        assert!(correlator.is_empty());
+    }
+
+    #[test]
+    fn correlator_expires_pending_and_ignores_stale_kfree() {
+        let base = Instant::now();
+        let mut correlator = Correlator::new(base);
+        let pass_event = sample_event(128, ACTION_XDP_PASS);
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+
+        correlator.register_pass(pass_event, 1, at_ms(base, 1));
+
+        let expired = correlator.drain_expired(at_ms(base, 60));
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].counter, 1);
+        assert!(correlator.is_empty());
+
+        assert!(correlator.match_kfree(&kfree_event, at_ms(base, 61)).is_none());
+    }
+
+    #[test]
+    fn correlator_prefers_shortest_time_distance_then_fifo() {
+        let base = Instant::now();
+        let mut correlator = Correlator::new(base);
+        let pass_event = sample_event(128, ACTION_XDP_PASS);
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+
+        correlator.register_pass(pass_event, 1, at_ms(base, 10));
+        correlator.register_pass(pass_event, 2, at_ms(base, 10));
+        correlator.register_pass(pass_event, 3, at_ms(base, 14));
+
+        let first = correlator
+            .match_kfree(&kfree_event, at_ms(base, 13))
+            .expect("nearest event should match first");
+        assert_eq!(first.counter, 3);
+
+        let tie_now = at_ms(base, 15);
+        let second = correlator
+            .match_kfree(&kfree_event, tie_now)
+            .expect("tie should still produce a match");
+        assert_eq!(second.counter, 1);
+
+        let third = correlator
+            .match_kfree(&kfree_event, at_ms(base, 12))
+            .expect("remaining packet should match");
+        assert_eq!(third.counter, 2);
+        assert!(correlator.is_empty());
     }
 }
