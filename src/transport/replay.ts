@@ -1,30 +1,38 @@
-import type { CapturedPacket, CapturedPacketBatch } from '../types';
+import type {
+  CapturedPacket,
+  ReplayFrame,
+  ReplayFrameBatch,
+} from '../types';
 
-type ClockSource = 'mono' | 'timestamp';
-
-interface ClockPoint {
-  source: ClockSource;
-  ms: number;
-}
-
-function resolveClockPoint(packet: CapturedPacket): ClockPoint {
-  const captureMonoNs = packet.packet.captureMonoNs;
-  if (typeof captureMonoNs === 'number' && Number.isFinite(captureMonoNs)) {
-    return { source: 'mono', ms: captureMonoNs / 1_000_000 };
-  }
-  return { source: 'timestamp', ms: packet.packet.timestamp };
-}
+const SAME_MOMENT_EPSILON_MS = 1e-6;
+const COMPACT_HEAD_THRESHOLD = 1024;
 
 export interface PacketReplayer {
-  enqueue(batch: CapturedPacketBatch): void;
+  enqueue(batch: ReplayFrameBatch): void;
   dispose(): void;
 }
 
 export function createPacketReplayer(onPacket: (packet: CapturedPacket) => void): PacketReplayer {
-  const queue: CapturedPacket[] = [];
+  const queue: ReplayFrame[] = [];
+  let head = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
-  let lastClockPoint: ClockPoint | null = null;
+  let lastMonoMs: number | null = null;
+
+  function isQueueEmpty(): boolean {
+    return head >= queue.length;
+  }
+
+  function compactQueueIfNeeded() {
+    if (head === 0) {
+      return;
+    }
+    if (head < COMPACT_HEAD_THRESHOLD && head * 2 < queue.length) {
+      return;
+    }
+    queue.splice(0, head);
+    head = 0;
+  }
 
   function clearTimer() {
     if (timer) {
@@ -33,56 +41,66 @@ export function createPacketReplayer(onPacket: (packet: CapturedPacket) => void)
     }
   }
 
-  function drain() {
+  function flushDue(targetMonoMs: number) {
+    while (!isQueueEmpty()) {
+      const frame = queue[head];
+      if (frame.monoMs > targetMonoMs + SAME_MOMENT_EPSILON_MS) {
+        break;
+      }
+      head += 1;
+      onPacket(frame);
+      lastMonoMs = frame.monoMs;
+    }
+    compactQueueIfNeeded();
+  }
+
+  function scheduleNext() {
     if (disposed || timer) {
       return;
     }
 
-    while (queue.length > 0) {
-      const packet = queue[0];
-      const clockPoint = resolveClockPoint(packet);
+    while (!isQueueEmpty()) {
+      const nextMonoMs = queue[head].monoMs;
+      if (lastMonoMs === null) {
+        flushDue(nextMonoMs);
+        continue;
+      }
 
-      let delayMs = 0;
-      if (lastClockPoint && lastClockPoint.source === clockPoint.source) {
-        const deltaMs = clockPoint.ms - lastClockPoint.ms;
-        if (deltaMs > 0) {
-          delayMs = Math.floor(deltaMs);
+      const deltaMs = nextMonoMs - lastMonoMs;
+      const delayMs = deltaMs > 0 ? Math.floor(deltaMs) : 0;
+      if (delayMs <= 0) {
+        flushDue(nextMonoMs);
+        continue;
+      }
+
+      timer = setTimeout(() => {
+        timer = null;
+        if (disposed) {
+          return;
         }
-      }
-
-      if (delayMs > 0) {
-        timer = setTimeout(() => {
-          timer = null;
-          if (disposed || queue.length === 0) {
-            return;
-          }
-
-          const nextPacket = queue.shift()!;
-          const nextClockPoint = resolveClockPoint(nextPacket);
-          onPacket(nextPacket);
-          lastClockPoint = nextClockPoint;
-          drain();
-        }, delayMs);
-        return;
-      }
-
-      queue.shift();
-      onPacket(packet);
-      lastClockPoint = clockPoint;
+        flushDue(nextMonoMs);
+        scheduleNext();
+      }, delayMs);
+      return;
     }
   }
 
   return {
-    enqueue(batch: CapturedPacketBatch) {
+    enqueue(batch: ReplayFrameBatch) {
       if (disposed || batch.length === 0) {
         return;
       }
-      queue.push(...batch);
-      drain();
+      for (const frame of batch) {
+        if (Number.isFinite(frame.monoMs)) {
+          queue.push(frame);
+        }
+      }
+      scheduleNext();
     },
     dispose() {
       disposed = true;
       queue.length = 0;
+      head = 0;
       clearTimer();
     },
   };

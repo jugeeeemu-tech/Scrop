@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CapturedPacketBatch } from '../types';
+import type { ReplayFrameBatch } from '../types';
 import { createWebTransport } from './web';
 import { decodePacketBatch } from './proto/decodePacketBatch';
 import { createPacketReplayer } from './replay';
@@ -54,7 +54,7 @@ describe('createWebTransport subscribePackets', () => {
   });
 
   it('sets binaryType to arraybuffer and decodes binary payload', () => {
-    const batch: CapturedPacketBatch = [
+    const batch: ReplayFrameBatch = [
       {
         packet: {
           id: 'pkt-1',
@@ -67,6 +67,7 @@ describe('createWebTransport subscribePackets', () => {
           timestamp: 1_700_000_000_000,
         },
         result: 'delivered',
+        monoMs: 10_000,
       },
     ];
     vi.mocked(decodePacketBatch).mockReturnValue(batch);

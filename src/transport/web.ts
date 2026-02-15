@@ -1,5 +1,5 @@
 import type { Transport } from './index';
-import type { CapturedPacket, CapturedPacketBatch } from '../types';
+import type { CapturedPacket } from '../types';
 import { createPacketReplayer } from './replay';
 import { decodePacketBatch } from './proto/decodePacketBatch';
 
@@ -75,7 +75,7 @@ export function createWebTransport(): Transport {
               return;
             }
 
-            const batch: CapturedPacketBatch = decodePacketBatch(event.data);
+            const batch = decodePacketBatch(event.data);
             if (!Array.isArray(batch)) {
               console.error('Unexpected WebSocket payload shape:', batch);
               return;

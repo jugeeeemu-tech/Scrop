@@ -1,6 +1,41 @@
 import type { Transport } from './index';
-import type { CapturedPacket, CapturedPacketBatch } from '../types';
+import type {
+  AnimatingPacket,
+  CapturedPacket,
+  CapturedPacketEnvelope,
+  ReplayFrameBatch,
+} from '../types';
 import { createPacketReplayer } from './replay';
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function normalizeEnvelope(envelope: CapturedPacketEnvelope): ReplayFrameBatch {
+  if (!isFiniteNumber(envelope.epochOffsetMs) || !Array.isArray(envelope.packets)) {
+    return [];
+  }
+
+  const batch: ReplayFrameBatch = [];
+  for (const captured of envelope.packets) {
+    const packet = captured?.packet;
+    if (!packet || !isFiniteNumber(packet.captureMonoNs)) {
+      continue;
+    }
+    const { captureMonoNs, ...wirePacket } = packet;
+    const monoMs = captureMonoNs / 1_000_000;
+    const packetForUi: AnimatingPacket = {
+      ...wirePacket,
+      timestamp: monoMs + envelope.epochOffsetMs,
+    };
+    batch.push({
+      packet: packetForUi,
+      result: captured.result,
+      monoMs,
+    });
+  }
+  return batch;
+}
 
 export function createTauriTransport(): Transport {
   return {
@@ -40,12 +75,9 @@ export function createTauriTransport(): Transport {
       const replayer = createPacketReplayer(onPacket);
 
       import('@tauri-apps/api/event').then(({ listen }) => {
-        listen<CapturedPacketBatch>('packet:captured-batch', (event) => {
-          if (!Array.isArray(event.payload)) {
-            console.error('Unexpected Tauri event payload shape:', event.payload);
-            return;
-          }
-          replayer.enqueue(event.payload);
+        listen<CapturedPacketEnvelope>('packet:captured-batch', (event) => {
+          const batch = normalizeEnvelope(event.payload);
+          replayer.enqueue(batch);
         }).then((fn) => {
           if (disposed) {
             fn();

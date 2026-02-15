@@ -5,7 +5,8 @@ import { scrop } from './generated/packet_stream.js';
 describe('decodePacketBatch', () => {
   it('decodes protobuf payload into captured packet batch', () => {
     const encoded = scrop.packet.PacketBatchEnvelope.encode({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      epochOffsetMs: 1_700_000_000_000,
       packets: [
         {
           packet: {
@@ -17,7 +18,6 @@ describe('decodePacketBatch', () => {
             destination: '10.0.0.1',
             destPort: 80,
             targetPort: 80,
-            timestamp: 1_700_000_000_000,
             reason: 'blocked',
             captureMonoNs: 10_000_000,
           },
@@ -38,11 +38,11 @@ describe('decodePacketBatch', () => {
           destination: '10.0.0.1',
           destPort: 80,
           targetPort: 80,
-          timestamp: 1_700_000_000_000,
+          timestamp: 1_700_000_000_010,
           reason: 'blocked',
-          captureMonoNs: 10_000_000,
         },
         result: 'delivered',
+        monoMs: 10,
       },
     ]);
   });
@@ -50,6 +50,7 @@ describe('decodePacketBatch', () => {
   it('rejects unsupported schema version', () => {
     const encoded = scrop.packet.PacketBatchEnvelope.encode({
       schemaVersion: 999,
+      epochOffsetMs: 0,
       packets: [],
     }).finish();
 
@@ -58,7 +59,8 @@ describe('decodePacketBatch', () => {
 
   it('skips packets with unknown enum values', () => {
     const encoded = scrop.packet.PacketBatchEnvelope.encode({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      epochOffsetMs: 100,
       packets: [
         {
           packet: {
@@ -69,7 +71,7 @@ describe('decodePacketBatch', () => {
             srcPort: 1,
             destination: 'd',
             destPort: 2,
-            timestamp: 10,
+            captureMonoNs: 10_000_000,
           },
           result: scrop.packet.PacketResult.PACKET_RESULT_DELIVERED,
         },
@@ -82,7 +84,7 @@ describe('decodePacketBatch', () => {
             srcPort: 1,
             destination: 'd',
             destPort: 2,
-            timestamp: 10,
+            captureMonoNs: 10_000_000,
           },
           result: 999 as unknown as scrop.packet.PacketResult,
         },

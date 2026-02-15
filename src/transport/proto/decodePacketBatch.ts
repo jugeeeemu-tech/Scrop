@@ -1,7 +1,12 @@
-import type { CapturedPacket, CapturedPacketBatch, PacketResult } from '../../types';
+import type {
+  AnimatingPacket,
+  PacketResult,
+  ReplayFrame,
+  ReplayFrameBatch,
+} from '../../types';
 import { scrop } from './generated/packet_stream.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 function toPacketResult(result: number): PacketResult | null {
   switch (result) {
@@ -31,7 +36,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-function mapCapturedPacket(payload: scrop.packet.ICapturedPacket): CapturedPacket | null {
+function mapCapturedPacket(
+  payload: scrop.packet.ICapturedPacket,
+  epochOffsetMs: number,
+): ReplayFrame | null {
   if (!payload.packet) return null;
 
   const result = toPacketResult(payload.result ?? scrop.packet.PacketResult.PACKET_RESULT_UNSPECIFIED);
@@ -50,41 +58,41 @@ function mapCapturedPacket(payload: scrop.packet.ICapturedPacket): CapturedPacke
     !isFiniteNumber(packet.srcPort) ||
     typeof destination !== 'string' ||
     !isFiniteNumber(packet.destPort) ||
-    !isFiniteNumber(packet.timestamp)
+    !isFiniteNumber(packet.captureMonoNs)
   ) {
     return null;
   }
 
-  const mapped: CapturedPacket = {
-    packet: {
-      id,
-      protocol,
-      size: packet.size,
-      source,
-      srcPort: packet.srcPort,
-      destination,
-      destPort: packet.destPort,
-      timestamp: packet.timestamp,
-    },
-    result,
+  const monoMs = packet.captureMonoNs / 1_000_000;
+  const timestamp = monoMs + epochOffsetMs;
+
+  const packetForUi: AnimatingPacket = {
+    id,
+    protocol,
+    size: packet.size,
+    source,
+    srcPort: packet.srcPort,
+    destination,
+    destPort: packet.destPort,
+    timestamp,
   };
 
   if (isFiniteNumber(packet.targetPort)) {
-    mapped.packet.targetPort = packet.targetPort;
+    packetForUi.targetPort = packet.targetPort;
   }
 
   if (typeof packet.reason === 'string') {
-    mapped.packet.reason = packet.reason;
+    packetForUi.reason = packet.reason;
   }
 
-  if (isFiniteNumber(packet.captureMonoNs)) {
-    mapped.packet.captureMonoNs = packet.captureMonoNs;
-  }
-
-  return mapped;
+  return {
+    packet: packetForUi,
+    result,
+    monoMs,
+  };
 }
 
-export function decodePacketBatch(payload: ArrayBuffer | Uint8Array): CapturedPacketBatch {
+export function decodePacketBatch(payload: ArrayBuffer | Uint8Array): ReplayFrameBatch {
   const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
   const envelope = scrop.packet.PacketBatchEnvelope.decode(bytes);
 
@@ -93,11 +101,14 @@ export function decodePacketBatch(payload: ArrayBuffer | Uint8Array): CapturedPa
       `Unsupported schema version: expected ${SCHEMA_VERSION}, got ${envelope.schemaVersion}`,
     );
   }
+  if (!isFiniteNumber(envelope.epochOffsetMs)) {
+    throw new Error('epochOffsetMs is missing or invalid');
+  }
 
   const packets = envelope.packets ?? [];
-  const decoded: CapturedPacketBatch = [];
+  const decoded: ReplayFrameBatch = [];
   for (const packet of packets) {
-    const mapped = mapCapturedPacket(packet);
+    const mapped = mapCapturedPacket(packet, envelope.epochOffsetMs);
     if (mapped) decoded.push(mapped);
   }
 
