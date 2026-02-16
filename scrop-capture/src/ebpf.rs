@@ -39,6 +39,24 @@ const CORRELATION_BUCKET_MS: u64 = 5;
 const CORRELATION_TIMEOUT_MS: u64 = 50;
 const SEARCH_BUCKET_RADIUS: u64 = 1;
 const WHEEL_SLOTS: usize = 64;
+const SHADOW_CORRELATOR_ENV: &str = "SCROP_SHADOW_CORRELATOR";
+
+#[derive(Clone, Copy)]
+enum ResultClass {
+    Delivered,
+    NicDrop,
+    FwDrop,
+}
+
+impl ResultClass {
+    fn from_packet_result(result: &PacketResult) -> Self {
+        match result {
+            PacketResult::Delivered => Self::Delivered,
+            PacketResult::NicDrop => Self::NicDrop,
+            PacketResult::FwDrop => Self::FwDrop,
+        }
+    }
+}
 
 #[derive(Default)]
 struct DiagCounters {
@@ -49,6 +67,19 @@ struct DiagCounters {
     correlator_timeout_drain_calls: AtomicU64,
     correlator_timeout_expired_packets: AtomicU64,
     correlator_timeout_expired_max_batch: AtomicU64,
+    shadow_compare_enabled: AtomicU64,
+    shadow_pairs_total: AtomicU64,
+    shadow_unmatched_legacy: AtomicU64,
+    shadow_unmatched_ktime: AtomicU64,
+    shadow_legacy_delivered_ktime_delivered: AtomicU64,
+    shadow_legacy_delivered_ktime_nic_drop: AtomicU64,
+    shadow_legacy_delivered_ktime_fw_drop: AtomicU64,
+    shadow_legacy_nic_drop_ktime_delivered: AtomicU64,
+    shadow_legacy_nic_drop_ktime_nic_drop: AtomicU64,
+    shadow_legacy_nic_drop_ktime_fw_drop: AtomicU64,
+    shadow_legacy_fw_drop_ktime_delivered: AtomicU64,
+    shadow_legacy_fw_drop_ktime_nic_drop: AtomicU64,
+    shadow_legacy_fw_drop_ktime_fw_drop: AtomicU64,
 }
 
 impl DiagCounters {
@@ -63,6 +94,28 @@ impl DiagCounters {
         self.correlator_timeout_expired_packets
             .store(0, Ordering::Relaxed);
         self.correlator_timeout_expired_max_batch
+            .store(0, Ordering::Relaxed);
+        self.shadow_compare_enabled.store(0, Ordering::Relaxed);
+        self.shadow_pairs_total.store(0, Ordering::Relaxed);
+        self.shadow_unmatched_legacy.store(0, Ordering::Relaxed);
+        self.shadow_unmatched_ktime.store(0, Ordering::Relaxed);
+        self.shadow_legacy_delivered_ktime_delivered
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_delivered_ktime_nic_drop
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_delivered_ktime_fw_drop
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_nic_drop_ktime_delivered
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_nic_drop_ktime_nic_drop
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_nic_drop_ktime_fw_drop
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_fw_drop_ktime_delivered
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_fw_drop_ktime_nic_drop
+            .store(0, Ordering::Relaxed);
+        self.shadow_legacy_fw_drop_ktime_fw_drop
             .store(0, Ordering::Relaxed);
     }
 
@@ -80,6 +133,37 @@ impl DiagCounters {
         stats.correlator_timeout_expired_max_batch = self
             .correlator_timeout_expired_max_batch
             .load(Ordering::Relaxed);
+        stats.shadow_compare_enabled = self.shadow_compare_enabled.load(Ordering::Relaxed);
+        stats.shadow_pairs_total = self.shadow_pairs_total.load(Ordering::Relaxed);
+        stats.shadow_unmatched_legacy = self.shadow_unmatched_legacy.load(Ordering::Relaxed);
+        stats.shadow_unmatched_ktime = self.shadow_unmatched_ktime.load(Ordering::Relaxed);
+        stats.shadow_legacy_delivered_ktime_delivered = self
+            .shadow_legacy_delivered_ktime_delivered
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_delivered_ktime_nic_drop = self
+            .shadow_legacy_delivered_ktime_nic_drop
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_delivered_ktime_fw_drop = self
+            .shadow_legacy_delivered_ktime_fw_drop
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_nic_drop_ktime_delivered = self
+            .shadow_legacy_nic_drop_ktime_delivered
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_nic_drop_ktime_nic_drop = self
+            .shadow_legacy_nic_drop_ktime_nic_drop
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_nic_drop_ktime_fw_drop = self
+            .shadow_legacy_nic_drop_ktime_fw_drop
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_fw_drop_ktime_delivered = self
+            .shadow_legacy_fw_drop_ktime_delivered
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_fw_drop_ktime_nic_drop = self
+            .shadow_legacy_fw_drop_ktime_nic_drop
+            .load(Ordering::Relaxed);
+        stats.shadow_legacy_fw_drop_ktime_fw_drop = self
+            .shadow_legacy_fw_drop_ktime_fw_drop
+            .load(Ordering::Relaxed);
     }
 
     fn record_timeout_drain(&self, expired_packets: u64) {
@@ -91,6 +175,50 @@ impl DiagCounters {
         self.correlator_timeout_expired_packets
             .fetch_add(expired_packets, Ordering::Relaxed);
         update_atomic_max(&self.correlator_timeout_expired_max_batch, expired_packets);
+    }
+
+    fn set_shadow_compare_enabled(&self, enabled: bool) {
+        self.shadow_compare_enabled
+            .store(if enabled { 1 } else { 0 }, Ordering::Relaxed);
+    }
+
+    fn record_shadow_transition(&self, legacy: ResultClass, ktime: ResultClass) {
+        self.shadow_pairs_total.fetch_add(1, Ordering::Relaxed);
+        match (legacy, ktime) {
+            (ResultClass::Delivered, ResultClass::Delivered) => self
+                .shadow_legacy_delivered_ktime_delivered
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::Delivered, ResultClass::NicDrop) => self
+                .shadow_legacy_delivered_ktime_nic_drop
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::Delivered, ResultClass::FwDrop) => self
+                .shadow_legacy_delivered_ktime_fw_drop
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::NicDrop, ResultClass::Delivered) => self
+                .shadow_legacy_nic_drop_ktime_delivered
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::NicDrop, ResultClass::NicDrop) => self
+                .shadow_legacy_nic_drop_ktime_nic_drop
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::NicDrop, ResultClass::FwDrop) => self
+                .shadow_legacy_nic_drop_ktime_fw_drop
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::FwDrop, ResultClass::Delivered) => self
+                .shadow_legacy_fw_drop_ktime_delivered
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::FwDrop, ResultClass::NicDrop) => self
+                .shadow_legacy_fw_drop_ktime_nic_drop
+                .fetch_add(1, Ordering::Relaxed),
+            (ResultClass::FwDrop, ResultClass::FwDrop) => self
+                .shadow_legacy_fw_drop_ktime_fw_drop
+                .fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    fn record_shadow_unmatched(&self, legacy: u64, ktime: u64) {
+        self.shadow_unmatched_legacy
+            .store(legacy, Ordering::Relaxed);
+        self.shadow_unmatched_ktime.store(ktime, Ordering::Relaxed);
     }
 }
 
@@ -270,6 +398,16 @@ fn clock_gettime_ns(clock_id: libc::clockid_t) -> Result<u64, String> {
         .saturating_add(ts.tv_nsec as u64))
 }
 
+fn env_flag_enabled(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        }
+        Err(_) => false,
+    }
+}
+
 fn calculate_epoch_offset_ms() -> Result<f64, String> {
     let realtime_ns = clock_gettime_ns(libc::CLOCK_REALTIME)?;
     let monotonic_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)?;
@@ -364,7 +502,10 @@ impl Correlator {
     }
 
     fn register_pass(&mut self, event: PacketEvent, counter: u64) {
-        let received_mono_ns = event.ktime_ns;
+        self.register_pass_at(event, counter, event.ktime_ns);
+    }
+
+    fn register_pass_at(&mut self, event: PacketEvent, counter: u64, received_mono_ns: u64) {
         let bucket = Self::bucket_of(received_mono_ns);
         let key = FlowSizeKey::from_event(&event);
         let slot = self.slot_for_write(bucket);
@@ -379,8 +520,11 @@ impl Correlator {
     }
 
     fn match_kfree(&mut self, event: &PacketEvent) -> Option<PendingPacket> {
+        self.match_kfree_at(event, event.ktime_ns)
+    }
+
+    fn match_kfree_at(&mut self, event: &PacketEvent, now_mono_ns: u64) -> Option<PendingPacket> {
         let key = FlowSizeKey::from_event(event);
-        let now_mono_ns = event.ktime_ns;
         let now_bucket = Self::bucket_of(now_mono_ns);
         let search_buckets = Self::search_buckets(now_bucket);
 
@@ -515,6 +659,43 @@ impl Correlator {
 
     fn slot_index(bucket: u64) -> usize {
         (bucket % WHEEL_SLOTS as u64) as usize
+    }
+}
+
+struct ShadowTransitionTracker {
+    legacy_only: HashMap<u64, ResultClass>,
+    ktime_only: HashMap<u64, ResultClass>,
+    diag: Arc<DiagCounters>,
+}
+
+impl ShadowTransitionTracker {
+    fn new(diag: Arc<DiagCounters>) -> Self {
+        Self {
+            legacy_only: HashMap::new(),
+            ktime_only: HashMap::new(),
+            diag,
+        }
+    }
+
+    fn observe_legacy(&mut self, counter: u64, result: ResultClass) {
+        if let Some(ktime_result) = self.ktime_only.remove(&counter) {
+            self.diag.record_shadow_transition(result, ktime_result);
+            return;
+        }
+        self.legacy_only.insert(counter, result);
+    }
+
+    fn observe_ktime(&mut self, counter: u64, result: ResultClass) {
+        if let Some(legacy_result) = self.legacy_only.remove(&counter) {
+            self.diag.record_shadow_transition(legacy_result, result);
+            return;
+        }
+        self.ktime_only.insert(counter, result);
+    }
+
+    fn finalize(self) {
+        self.diag
+            .record_shadow_unmatched(self.legacy_only.len() as u64, self.ktime_only.len() as u64);
     }
 }
 
@@ -739,10 +920,22 @@ async fn run_ebpf_capture(
     let correlation_resolver = Arc::clone(&resolver);
     let correlation_session_id = session_id;
     let correlation_diag = Arc::clone(&diag);
+    let shadow_compare_enabled = env_flag_enabled(SHADOW_CORRELATOR_ENV);
+    correlation_diag.set_shadow_compare_enabled(shadow_compare_enabled);
+    if shadow_compare_enabled {
+        info!(
+            env = SHADOW_CORRELATOR_ENV,
+            "shadow legacy correlator enabled for transition diagnostics"
+        );
+    }
 
     tokio::spawn(async move {
         let mut offset_cache = initial_offset_cache;
         let mut correlator = Correlator::new(Arc::clone(&correlation_diag));
+        let mut shadow_correlator =
+            shadow_compare_enabled.then(|| Correlator::new(Arc::clone(&correlation_diag)));
+        let mut shadow_tracker = shadow_compare_enabled
+            .then(|| ShadowTransitionTracker::new(Arc::clone(&correlation_diag)));
         let mut events_closed = false;
         let mut timeout_interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
         let mut batch_flush_interval =
@@ -757,10 +950,16 @@ async fn run_ebpf_capture(
                             if event.action == ACTION_XDP_PASS {
                                 // XDP PASS → pending に格納
                                 correlator.register_pass(event, counter);
+                                if let Some(shadow) = shadow_correlator.as_mut() {
+                                    let now_mono_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)
+                                        .unwrap_or(event.ktime_ns);
+                                    shadow.register_pass_at(event, counter, now_mono_ns);
+                                }
                             } else if event.action == ACTION_KFREE_SKB {
                                 // kfree_skb → pending から flow+size+time-bucket で相関
                                 let result = correlation_resolver.classify_drop(event.drop_reason);
                                 let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
+                                let result_class = ResultClass::from_packet_result(&result);
 
                                 if let Some(p) = correlator.match_kfree(&event) {
                                     // XDP で見たパケットがドロップされた
@@ -773,12 +972,25 @@ async fn run_ebpf_capture(
                                     );
                                     update_stats(&correlation_stats, &captured.result);
                                     out_batch.push(captured);
+                                    if let Some(tracker) = shadow_tracker.as_mut() {
+                                        tracker.observe_ktime(p.counter, result_class);
+                                    }
                                     if out_batch.len() >= BATCH_MAX_SIZE {
                                         flush_captured_batch(
                                             &correlation_event_tx,
                                             &mut out_batch,
                                             offset_cache.current_offset_ms(),
                                         );
+                                    }
+                                }
+
+                                if let Some(shadow) = shadow_correlator.as_mut() {
+                                    let now_mono_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)
+                                        .unwrap_or(event.ktime_ns);
+                                    if let Some(p) = shadow.match_kfree_at(&event, now_mono_ns) {
+                                        if let Some(tracker) = shadow_tracker.as_mut() {
+                                            tracker.observe_legacy(p.counter, result_class);
+                                        }
                                     }
                                 }
                                 // pending にマッチしない kfree_skb イベントは破棄する
@@ -791,8 +1003,10 @@ async fn run_ebpf_capture(
                     }
                 }
                 _ = timeout_interval.tick() => {
+                    let shadow_is_empty = shadow_correlator.as_ref().map_or(true, Correlator::is_empty);
                     if (!correlation_is_running.load(Ordering::SeqCst) || events_closed)
                         && correlator.is_empty()
+                        && shadow_is_empty
                     {
                         break;
                     }
@@ -813,6 +1027,9 @@ async fn run_ebpf_capture(
                             None,
                         );
                         update_stats(&correlation_stats, &captured.result);
+                        if let Some(tracker) = shadow_tracker.as_mut() {
+                            tracker.observe_ktime(p.counter, ResultClass::Delivered);
+                        }
                         out_batch.push(captured);
                         if out_batch.len() >= BATCH_MAX_SIZE {
                             flush_captured_batch(
@@ -820,6 +1037,14 @@ async fn run_ebpf_capture(
                                 &mut out_batch,
                                 offset_cache.current_offset_ms(),
                             );
+                        }
+                    }
+
+                    if let Some(shadow) = shadow_correlator.as_mut() {
+                        for p in shadow.drain_expired(now_mono_ns) {
+                            if let Some(tracker) = shadow_tracker.as_mut() {
+                                tracker.observe_legacy(p.counter, ResultClass::Delivered);
+                            }
                         }
                     }
                 }
@@ -833,6 +1058,9 @@ async fn run_ebpf_capture(
             }
         }
 
+        if let Some(tracker) = shadow_tracker.take() {
+            tracker.finalize();
+        }
         flush_captured_batch(
             &correlation_event_tx,
             &mut out_batch,
@@ -1167,5 +1395,30 @@ mod tests {
             .expect("remaining packet should match");
         assert_eq!(third.counter, 2);
         assert!(correlator.is_empty());
+    }
+
+    #[test]
+    fn shadow_transition_tracker_records_directional_transitions() {
+        let diag = Arc::new(DiagCounters::default());
+        diag.set_shadow_compare_enabled(true);
+        let mut tracker = ShadowTransitionTracker::new(Arc::clone(&diag));
+
+        tracker.observe_legacy(10, ResultClass::FwDrop);
+        tracker.observe_ktime(10, ResultClass::Delivered);
+        tracker.observe_ktime(11, ResultClass::FwDrop);
+        tracker.observe_legacy(11, ResultClass::Delivered);
+        tracker.observe_legacy(12, ResultClass::FwDrop);
+        tracker.observe_ktime(13, ResultClass::Delivered);
+        tracker.finalize();
+
+        let mut stats = CaptureStats::default();
+        diag.write_into_stats(&mut stats);
+
+        assert_eq!(stats.shadow_compare_enabled, 1);
+        assert_eq!(stats.shadow_pairs_total, 2);
+        assert_eq!(stats.shadow_legacy_fw_drop_ktime_delivered, 1);
+        assert_eq!(stats.shadow_legacy_delivered_ktime_fw_drop, 1);
+        assert_eq!(stats.shadow_unmatched_legacy, 1);
+        assert_eq!(stats.shadow_unmatched_ktime, 1);
     }
 }
