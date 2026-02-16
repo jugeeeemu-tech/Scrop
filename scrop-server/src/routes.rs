@@ -1,4 +1,6 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -12,6 +14,9 @@ use scrop_capture::{AppState, CaptureError};
 use scrop_capture::mock::MockTrafficProfile;
 #[cfg(not(feature = "ebpf"))]
 use serde::Deserialize;
+
+static STATUS_LOCK_WAIT_NS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static STATUS_LOCK_WAIT_SAMPLES: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,13 +88,24 @@ pub async fn stop_capture(
 pub async fn get_capture_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CaptureStatusResponse>, ApiError> {
+    let lock_started = Instant::now();
     let capture = state.capture.lock().await;
-    let stats = capture.get_stats();
+    let waited_ns = duration_as_u64_ns(lock_started.elapsed());
+    STATUS_LOCK_WAIT_NS_TOTAL.fetch_add(waited_ns, Ordering::Relaxed);
+    STATUS_LOCK_WAIT_SAMPLES.fetch_add(1, Ordering::Relaxed);
+
+    let mut stats = capture.get_stats();
+    stats.status_lock_wait_ns = STATUS_LOCK_WAIT_NS_TOTAL.load(Ordering::Relaxed);
+    stats.status_lock_wait_samples = STATUS_LOCK_WAIT_SAMPLES.load(Ordering::Relaxed);
     Ok(Json(CaptureStatusResponse {
         is_capturing: capture.is_running(),
         stats,
         mode: capture.mode().to_string(),
     }))
+}
+
+fn duration_as_u64_ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 pub async fn reset_capture(

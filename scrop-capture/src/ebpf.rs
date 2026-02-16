@@ -40,6 +40,32 @@ const CORRELATION_TIMEOUT_MS: u64 = 50;
 const SEARCH_BUCKET_RADIUS: u64 = 1;
 const WHEEL_SLOTS: usize = 64;
 
+#[derive(Default)]
+struct DiagCounters {
+    reader_send_wait_ns: AtomicU64,
+    reader_send_wait_samples: AtomicU64,
+    correlator_remove_scan_steps: AtomicU64,
+    correlator_remove_calls: AtomicU64,
+}
+
+impl DiagCounters {
+    fn reset(&self) {
+        self.reader_send_wait_ns.store(0, Ordering::Relaxed);
+        self.reader_send_wait_samples.store(0, Ordering::Relaxed);
+        self.correlator_remove_scan_steps
+            .store(0, Ordering::Relaxed);
+        self.correlator_remove_calls.store(0, Ordering::Relaxed);
+    }
+
+    fn write_into_stats(&self, stats: &mut CaptureStats) {
+        stats.reader_send_wait_ns = self.reader_send_wait_ns.load(Ordering::Relaxed);
+        stats.reader_send_wait_samples = self.reader_send_wait_samples.load(Ordering::Relaxed);
+        stats.correlator_remove_scan_steps =
+            self.correlator_remove_scan_steps.load(Ordering::Relaxed);
+        stats.correlator_remove_calls = self.correlator_remove_calls.load(Ordering::Relaxed);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // コマンドチャネル
 // ---------------------------------------------------------------------------
@@ -59,6 +85,7 @@ pub struct EbpfCapture {
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
+    diag: Arc<DiagCounters>,
     command_tx: std::sync::Mutex<Option<mpsc::Sender<EbpfCommand>>>,
 }
 
@@ -68,6 +95,7 @@ impl EbpfCapture {
             is_running: Arc::new(AtomicBool::new(false)),
             packet_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(std::sync::Mutex::new(CaptureStats::default())),
+            diag: Arc::new(DiagCounters::default()),
             command_tx: std::sync::Mutex::new(None),
         }
     }
@@ -77,7 +105,9 @@ impl EbpfCapture {
     }
 
     pub fn get_stats(&self) -> CaptureStats {
-        self.stats.lock().unwrap().clone()
+        let mut stats = self.stats.lock().unwrap().clone();
+        self.diag.write_into_stats(&mut stats);
+        stats
     }
 
     pub fn start(&self, event_tx: broadcast::Sender<CapturedPacketEnvelope>) {
@@ -91,6 +121,7 @@ impl EbpfCapture {
         let is_running = Arc::clone(&self.is_running);
         let packet_counter = Arc::clone(&self.packet_counter);
         let stats = Arc::clone(&self.stats);
+        let diag = Arc::clone(&self.diag);
         let session_id = generate_session_id();
 
         tokio::spawn(async move {
@@ -100,6 +131,7 @@ impl EbpfCapture {
                 is_running.clone(),
                 packet_counter,
                 stats,
+                diag,
                 session_id,
             )
             .await
@@ -120,6 +152,7 @@ impl EbpfCapture {
     pub fn reset(&self) {
         self.packet_counter.store(0, Ordering::SeqCst);
         *self.stats.lock().unwrap() = CaptureStats::default();
+        self.diag.reset();
     }
 
     pub async fn attach_interface(&self, name: &str) -> Result<(), CaptureError> {
@@ -276,13 +309,15 @@ struct BucketSlot {
 struct Correlator {
     base_instant: Instant,
     wheel: Vec<BucketSlot>,
+    diag: Arc<DiagCounters>,
 }
 
 impl Correlator {
-    fn new(base_instant: Instant) -> Self {
+    fn new(base_instant: Instant, diag: Arc<DiagCounters>) -> Self {
         Self {
             base_instant,
             wheel: (0..WHEEL_SLOTS).map(|_| BucketSlot::default()).collect(),
+            diag,
         }
     }
 
@@ -295,11 +330,14 @@ impl Correlator {
         let bucket = self.bucket_of(now);
         let key = FlowSizeKey::from_event(&event);
         let slot = self.slot_for_write(bucket);
-        slot.by_key.entry(key).or_default().push_back(PendingPacket {
-            event,
-            counter,
-            received_at: now,
-        });
+        slot.by_key
+            .entry(key)
+            .or_default()
+            .push_back(PendingPacket {
+                event,
+                counter,
+                received_at: now,
+            });
     }
 
     fn match_kfree(&mut self, event: &PacketEvent, now: Instant) -> Option<PendingPacket> {
@@ -325,7 +363,8 @@ impl Correlator {
             match &mut best {
                 None => best = Some((bucket, bucket_order, distance)),
                 Some((best_bucket, best_order, best_dist)) => {
-                    if distance < *best_dist || (distance == *best_dist && bucket_order < *best_order)
+                    if distance < *best_dist
+                        || (distance == *best_dist && bucket_order < *best_order)
                     {
                         *best_bucket = bucket;
                         *best_order = bucket_order;
@@ -336,10 +375,11 @@ impl Correlator {
         }
 
         let (bucket, _, _) = best?;
+        let diag = Arc::clone(&self.diag);
         let slot = self.slot_for_epoch_mut(bucket)?;
         let mut remove_key = false;
         let removed = if let Some(queue) = slot.by_key.get_mut(&key) {
-            let removed = pop_latest_nearest_with_fifo_tie(queue);
+            let removed = pop_latest_nearest_with_fifo_tie(queue, &diag);
             remove_key = queue.is_empty();
             removed
         } else {
@@ -439,17 +479,26 @@ impl Correlator {
     }
 }
 
-fn pop_latest_nearest_with_fifo_tie(queue: &mut VecDeque<PendingPacket>) -> Option<PendingPacket> {
+fn pop_latest_nearest_with_fifo_tie(
+    queue: &mut VecDeque<PendingPacket>,
+    diag: &DiagCounters,
+) -> Option<PendingPacket> {
+    diag.correlator_remove_calls.fetch_add(1, Ordering::Relaxed);
     let latest_ts = queue.back()?.received_at;
     if queue.len() == 1 {
+        diag.correlator_remove_scan_steps
+            .fetch_add(1, Ordering::Relaxed);
         return queue.pop_back();
     }
 
     // 末尾が単独時刻なら O(1) で取り出す。
+    let mut scan_steps = 2u64;
     if queue
         .get(queue.len().saturating_sub(2))
         .is_some_and(|prev| prev.received_at != latest_ts)
     {
+        diag.correlator_remove_scan_steps
+            .fetch_add(scan_steps, Ordering::Relaxed);
         return queue.pop_back();
     }
 
@@ -461,7 +510,10 @@ fn pop_latest_nearest_with_fifo_tie(queue: &mut VecDeque<PendingPacket>) -> Opti
             .is_some_and(|prev| prev.received_at == latest_ts)
     {
         idx -= 1;
+        scan_steps += 1;
     }
+    diag.correlator_remove_scan_steps
+        .fetch_add(scan_steps, Ordering::Relaxed);
     queue.remove(idx)
 }
 
@@ -471,6 +523,10 @@ fn instant_distance(a: Instant, b: Instant) -> Duration {
     } else {
         b.duration_since(a)
     }
+}
+
+fn duration_as_u64_ns(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +563,7 @@ async fn run_ebpf_capture(
     is_running: Arc<AtomicBool>,
     packet_counter: Arc<AtomicU64>,
     stats: Arc<std::sync::Mutex<CaptureStats>>,
+    diag: Arc<DiagCounters>,
     session_id: String,
 ) -> Result<(), CaptureError> {
     let resolver = Arc::new(DropReasonResolver::new().map_err(|e| CaptureError::Other(e))?);
@@ -570,6 +627,7 @@ async fn run_ebpf_capture(
     let is_running_reader = Arc::clone(&is_running);
     let packet_counter_reader = Arc::clone(&packet_counter);
     let tx_reader = tx.clone();
+    let diag_reader = Arc::clone(&diag);
     tokio::spawn(async move {
         while is_running_reader.load(Ordering::SeqCst) {
             let mut drained: Vec<(PacketEvent, u64)> = Vec::with_capacity(256);
@@ -614,9 +672,17 @@ async fn run_ebpf_capture(
             drop(guard);
 
             for payload in drained {
+                let send_started = Instant::now();
                 if tx_reader.send(payload).await.is_err() {
                     return;
                 }
+                diag_reader.reader_send_wait_ns.fetch_add(
+                    duration_as_u64_ns(send_started.elapsed()),
+                    Ordering::Relaxed,
+                );
+                diag_reader
+                    .reader_send_wait_samples
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     });
@@ -636,7 +702,7 @@ async fn run_ebpf_capture(
 
     tokio::spawn(async move {
         let mut offset_cache = initial_offset_cache;
-        let mut correlator = Correlator::new(Instant::now());
+        let mut correlator = Correlator::new(Instant::now(), Arc::clone(&diag));
         let mut events_closed = false;
         let mut timeout_interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
         let mut batch_flush_interval =
@@ -995,7 +1061,9 @@ mod tests {
 
         correlator.register_pass(pass_event, 1, at_ms(base, 1));
 
-        assert!(correlator.match_kfree(&kfree_event, at_ms(base, 2)).is_none());
+        assert!(correlator
+            .match_kfree(&kfree_event, at_ms(base, 2))
+            .is_none());
         assert_eq!(correlator.pending_len(), 1);
     }
 
@@ -1027,7 +1095,9 @@ mod tests {
         assert_eq!(expired[0].counter, 1);
         assert!(correlator.is_empty());
 
-        assert!(correlator.match_kfree(&kfree_event, at_ms(base, 61)).is_none());
+        assert!(correlator
+            .match_kfree(&kfree_event, at_ms(base, 61))
+            .is_none());
     }
 
     #[test]

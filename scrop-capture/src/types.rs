@@ -134,6 +134,12 @@ pub struct CaptureStats {
     pub fw_dropped: u64,
     pub delivered: u64,
     pub transport_dropped: u64,
+    pub reader_send_wait_ns: u64,
+    pub reader_send_wait_samples: u64,
+    pub correlator_remove_scan_steps: u64,
+    pub correlator_remove_calls: u64,
+    pub status_lock_wait_ns: u64,
+    pub status_lock_wait_samples: u64,
 }
 
 #[cfg(test)]
@@ -240,6 +246,12 @@ mod tests {
         assert_eq!(stats.fw_dropped, 0);
         assert_eq!(stats.delivered, 0);
         assert_eq!(stats.transport_dropped, 0);
+        assert_eq!(stats.reader_send_wait_ns, 0);
+        assert_eq!(stats.reader_send_wait_samples, 0);
+        assert_eq!(stats.correlator_remove_scan_steps, 0);
+        assert_eq!(stats.correlator_remove_calls, 0);
+        assert_eq!(stats.status_lock_wait_ns, 0);
+        assert_eq!(stats.status_lock_wait_samples, 0);
     }
 
     #[test]
