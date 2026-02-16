@@ -46,6 +46,9 @@ struct DiagCounters {
     reader_send_wait_samples: AtomicU64,
     correlator_remove_scan_steps: AtomicU64,
     correlator_remove_calls: AtomicU64,
+    correlator_timeout_drain_calls: AtomicU64,
+    correlator_timeout_expired_packets: AtomicU64,
+    correlator_timeout_expired_max_batch: AtomicU64,
 }
 
 impl DiagCounters {
@@ -55,6 +58,12 @@ impl DiagCounters {
         self.correlator_remove_scan_steps
             .store(0, Ordering::Relaxed);
         self.correlator_remove_calls.store(0, Ordering::Relaxed);
+        self.correlator_timeout_drain_calls
+            .store(0, Ordering::Relaxed);
+        self.correlator_timeout_expired_packets
+            .store(0, Ordering::Relaxed);
+        self.correlator_timeout_expired_max_batch
+            .store(0, Ordering::Relaxed);
     }
 
     fn write_into_stats(&self, stats: &mut CaptureStats) {
@@ -63,6 +72,36 @@ impl DiagCounters {
         stats.correlator_remove_scan_steps =
             self.correlator_remove_scan_steps.load(Ordering::Relaxed);
         stats.correlator_remove_calls = self.correlator_remove_calls.load(Ordering::Relaxed);
+        stats.correlator_timeout_drain_calls =
+            self.correlator_timeout_drain_calls.load(Ordering::Relaxed);
+        stats.correlator_timeout_expired_packets = self
+            .correlator_timeout_expired_packets
+            .load(Ordering::Relaxed);
+        stats.correlator_timeout_expired_max_batch = self
+            .correlator_timeout_expired_max_batch
+            .load(Ordering::Relaxed);
+    }
+
+    fn record_timeout_drain(&self, expired_packets: u64) {
+        self.correlator_timeout_drain_calls
+            .fetch_add(1, Ordering::Relaxed);
+        if expired_packets == 0 {
+            return;
+        }
+        self.correlator_timeout_expired_packets
+            .fetch_add(expired_packets, Ordering::Relaxed);
+        update_atomic_max(&self.correlator_timeout_expired_max_batch, expired_packets);
+    }
+}
+
+fn update_atomic_max(target: &AtomicU64, candidate: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while candidate > current {
+        match target.compare_exchange_weak(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => break,
+            Err(next) => current = next,
+        }
     }
 }
 
@@ -297,7 +336,7 @@ impl FlowSizeKey {
 struct PendingPacket {
     event: PacketEvent,
     counter: u64,
-    received_at: Instant,
+    received_mono_ns: u64,
 }
 
 #[derive(Default)]
@@ -307,27 +346,26 @@ struct BucketSlot {
 }
 
 struct Correlator {
-    base_instant: Instant,
     wheel: Vec<BucketSlot>,
     diag: Arc<DiagCounters>,
 }
 
 impl Correlator {
-    fn new(base_instant: Instant, diag: Arc<DiagCounters>) -> Self {
+    fn new(diag: Arc<DiagCounters>) -> Self {
         Self {
-            base_instant,
             wheel: (0..WHEEL_SLOTS).map(|_| BucketSlot::default()).collect(),
             diag,
         }
     }
 
-    fn bucket_of(&self, now: Instant) -> u64 {
-        let elapsed_ms = now.saturating_duration_since(self.base_instant).as_millis();
-        (elapsed_ms as u64) / CORRELATION_BUCKET_MS
+    fn bucket_of(now_mono_ns: u64) -> u64 {
+        let bucket_ns = CORRELATION_BUCKET_MS.saturating_mul(1_000_000);
+        now_mono_ns / bucket_ns
     }
 
-    fn register_pass(&mut self, event: PacketEvent, counter: u64, now: Instant) {
-        let bucket = self.bucket_of(now);
+    fn register_pass(&mut self, event: PacketEvent, counter: u64) {
+        let received_mono_ns = event.ktime_ns;
+        let bucket = Self::bucket_of(received_mono_ns);
         let key = FlowSizeKey::from_event(&event);
         let slot = self.slot_for_write(bucket);
         slot.by_key
@@ -336,16 +374,17 @@ impl Correlator {
             .push_back(PendingPacket {
                 event,
                 counter,
-                received_at: now,
+                received_mono_ns,
             });
     }
 
-    fn match_kfree(&mut self, event: &PacketEvent, now: Instant) -> Option<PendingPacket> {
+    fn match_kfree(&mut self, event: &PacketEvent) -> Option<PendingPacket> {
         let key = FlowSizeKey::from_event(event);
-        let now_bucket = self.bucket_of(now);
+        let now_mono_ns = event.ktime_ns;
+        let now_bucket = Self::bucket_of(now_mono_ns);
         let search_buckets = Self::search_buckets(now_bucket);
 
-        let mut best: Option<(u64, usize, Duration)> = None;
+        let mut best: Option<(u64, usize, u64)> = None;
         for (bucket_order, bucket) in search_buckets.into_iter().enumerate() {
             let Some(slot) = self.slot_for_epoch(bucket) else {
                 continue;
@@ -358,8 +397,8 @@ impl Correlator {
             };
 
             // register_pass は push_back なので queue は受信時刻昇順を保つ。
-            // 相関時点では now >= received_at を満たすため、最短距離候補は末尾でよい。
-            let distance = instant_distance(candidate.received_at, now);
+            // 末尾の要素が最新時刻であり、kfree と最短距離になりやすい候補。
+            let distance = abs_distance_ns(candidate.received_mono_ns, now_mono_ns);
             match &mut best {
                 None => best = Some((bucket, bucket_order, distance)),
                 Some((best_bucket, best_order, best_dist)) => {
@@ -393,8 +432,8 @@ impl Correlator {
         removed
     }
 
-    fn drain_expired(&mut self, now: Instant) -> Vec<PendingPacket> {
-        let now_bucket = self.bucket_of(now);
+    fn drain_expired(&mut self, now_mono_ns: u64) -> Vec<PendingPacket> {
+        let now_bucket = Self::bucket_of(now_mono_ns);
         let timeout_buckets = CORRELATION_TIMEOUT_MS / CORRELATION_BUCKET_MS;
         let expire_bucket = now_bucket.saturating_sub(timeout_buckets);
         let mut drained = Vec::new();
@@ -484,7 +523,7 @@ fn pop_latest_nearest_with_fifo_tie(
     diag: &DiagCounters,
 ) -> Option<PendingPacket> {
     diag.correlator_remove_calls.fetch_add(1, Ordering::Relaxed);
-    let latest_ts = queue.back()?.received_at;
+    let latest_ts = queue.back()?.received_mono_ns;
     if queue.len() == 1 {
         diag.correlator_remove_scan_steps
             .fetch_add(1, Ordering::Relaxed);
@@ -495,7 +534,7 @@ fn pop_latest_nearest_with_fifo_tie(
     let mut scan_steps = 2u64;
     if queue
         .get(queue.len().saturating_sub(2))
-        .is_some_and(|prev| prev.received_at != latest_ts)
+        .is_some_and(|prev| prev.received_mono_ns != latest_ts)
     {
         diag.correlator_remove_scan_steps
             .fetch_add(scan_steps, Ordering::Relaxed);
@@ -507,7 +546,7 @@ fn pop_latest_nearest_with_fifo_tie(
     while idx > 0
         && queue
             .get(idx - 1)
-            .is_some_and(|prev| prev.received_at == latest_ts)
+            .is_some_and(|prev| prev.received_mono_ns == latest_ts)
     {
         idx -= 1;
         scan_steps += 1;
@@ -517,11 +556,11 @@ fn pop_latest_nearest_with_fifo_tie(
     queue.remove(idx)
 }
 
-fn instant_distance(a: Instant, b: Instant) -> Duration {
+fn abs_distance_ns(a: u64, b: u64) -> u64 {
     if a >= b {
-        a.duration_since(b)
+        a.saturating_sub(b)
     } else {
-        b.duration_since(a)
+        b.saturating_sub(a)
     }
 }
 
@@ -699,10 +738,11 @@ async fn run_ebpf_capture(
     let correlation_stats = Arc::clone(&stats);
     let correlation_resolver = Arc::clone(&resolver);
     let correlation_session_id = session_id;
+    let correlation_diag = Arc::clone(&diag);
 
     tokio::spawn(async move {
         let mut offset_cache = initial_offset_cache;
-        let mut correlator = Correlator::new(Instant::now(), Arc::clone(&diag));
+        let mut correlator = Correlator::new(Arc::clone(&correlation_diag));
         let mut events_closed = false;
         let mut timeout_interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
         let mut batch_flush_interval =
@@ -714,17 +754,15 @@ async fn run_ebpf_capture(
                 recv = rx.recv(), if !events_closed => {
                     match recv {
                         Some((event, counter)) => {
-                            let now = Instant::now();
-
                             if event.action == ACTION_XDP_PASS {
                                 // XDP PASS → pending に格納
-                                correlator.register_pass(event, counter, now);
+                                correlator.register_pass(event, counter);
                             } else if event.action == ACTION_KFREE_SKB {
                                 // kfree_skb → pending から flow+size+time-bucket で相関
                                 let result = correlation_resolver.classify_drop(event.drop_reason);
                                 let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
 
-                                if let Some(p) = correlator.match_kfree(&event, now) {
+                                if let Some(p) = correlator.match_kfree(&event) {
                                     // XDP で見たパケットがドロップされた
                                     let captured = convert_event(
                                         &p.event,
@@ -760,7 +798,13 @@ async fn run_ebpf_capture(
                     }
 
                     // タイムアウト: 50ms 超過の pending パケットを Delivered として emit
-                    for p in correlator.drain_expired(Instant::now()) {
+                    let Ok(now_mono_ns) = clock_gettime_ns(libc::CLOCK_MONOTONIC) else {
+                        warn!("failed to get CLOCK_MONOTONIC for timeout drain");
+                        continue;
+                    };
+                    let expired_packets = correlator.drain_expired(now_mono_ns);
+                    correlation_diag.record_timeout_drain(expired_packets.len() as u64);
+                    for p in expired_packets {
                         let captured = convert_event(
                             &p.event,
                             &correlation_session_id,
@@ -981,7 +1025,7 @@ fn convert_event(
 mod tests {
     use super::*;
 
-    fn sample_event(pkt_len: u32, action: u32) -> PacketEvent {
+    fn sample_event(pkt_len: u32, action: u32, ktime_ns: u64) -> PacketEvent {
         PacketEvent {
             src_addr: u32::from_be_bytes([192, 168, 0, 1]),
             dst_addr: u32::from_be_bytes([10, 0, 0, 1]),
@@ -992,12 +1036,16 @@ mod tests {
             pkt_len,
             action,
             drop_reason: 0,
-            ktime_ns: 42,
+            ktime_ns,
         }
     }
 
-    fn at_ms(base: Instant, ms: u64) -> Instant {
-        base + Duration::from_millis(ms)
+    fn at_ms(base_ns: u64, ms: u64) -> u64 {
+        base_ns.saturating_add(ms.saturating_mul(1_000_000))
+    }
+
+    fn new_correlator() -> Correlator {
+        Correlator::new(Arc::new(DiagCounters::default()))
     }
 
     #[test]
@@ -1035,18 +1083,17 @@ mod tests {
 
     #[test]
     fn correlator_preserves_multiple_pending_for_same_flow_and_size() {
-        let base = Instant::now();
-        let mut correlator = Correlator::new(base);
-        let pass_event = sample_event(128, ACTION_XDP_PASS);
-        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+        let base_ns = 1_000_000_000;
+        let mut correlator = new_correlator();
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB, at_ms(base_ns, 4));
 
-        correlator.register_pass(pass_event, 1, at_ms(base, 1));
-        correlator.register_pass(pass_event, 2, at_ms(base, 2));
-        correlator.register_pass(pass_event, 3, at_ms(base, 3));
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 1)), 1);
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 2)), 2);
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 3)), 3);
 
         assert_eq!(correlator.pending_len(), 3);
         let matched = correlator
-            .match_kfree(&kfree_event, at_ms(base, 4))
+            .match_kfree(&kfree_event)
             .expect("expected a correlated packet");
         assert_eq!(matched.counter, 3);
         assert_eq!(correlator.pending_len(), 2);
@@ -1054,28 +1101,24 @@ mod tests {
 
     #[test]
     fn correlator_prevents_mismatch_when_size_differs() {
-        let base = Instant::now();
-        let mut correlator = Correlator::new(base);
-        let pass_event = sample_event(128, ACTION_XDP_PASS);
-        let kfree_event = sample_event(256, ACTION_KFREE_SKB);
+        let base_ns = 1_000_000_000;
+        let mut correlator = new_correlator();
+        let kfree_event = sample_event(256, ACTION_KFREE_SKB, at_ms(base_ns, 2));
 
-        correlator.register_pass(pass_event, 1, at_ms(base, 1));
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 1)), 1);
 
-        assert!(correlator
-            .match_kfree(&kfree_event, at_ms(base, 2))
-            .is_none());
+        assert!(correlator.match_kfree(&kfree_event).is_none());
         assert_eq!(correlator.pending_len(), 1);
     }
 
     #[test]
     fn correlator_matches_across_bucket_boundary() {
-        let base = Instant::now();
-        let mut correlator = Correlator::new(base);
-        let pass_event = sample_event(128, ACTION_XDP_PASS);
-        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+        let base_ns = 1_000_000_000;
+        let mut correlator = new_correlator();
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB, at_ms(base_ns, 6));
 
-        correlator.register_pass(pass_event, 1, at_ms(base, 4));
-        let matched = correlator.match_kfree(&kfree_event, at_ms(base, 6));
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 4)), 1);
+        let matched = correlator.match_kfree(&kfree_event);
 
         assert!(matched.is_some());
         assert!(correlator.is_empty());
@@ -1083,47 +1126,44 @@ mod tests {
 
     #[test]
     fn correlator_expires_pending_and_ignores_stale_kfree() {
-        let base = Instant::now();
-        let mut correlator = Correlator::new(base);
-        let pass_event = sample_event(128, ACTION_XDP_PASS);
-        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+        let base_ns = 1_000_000_000;
+        let mut correlator = new_correlator();
+        let kfree_event = sample_event(128, ACTION_KFREE_SKB, at_ms(base_ns, 61));
 
-        correlator.register_pass(pass_event, 1, at_ms(base, 1));
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 1)), 1);
 
-        let expired = correlator.drain_expired(at_ms(base, 60));
+        let expired = correlator.drain_expired(at_ms(base_ns, 60));
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].counter, 1);
         assert!(correlator.is_empty());
 
-        assert!(correlator
-            .match_kfree(&kfree_event, at_ms(base, 61))
-            .is_none());
+        assert!(correlator.match_kfree(&kfree_event).is_none());
     }
 
     #[test]
     fn correlator_prefers_shortest_time_distance_then_fifo() {
-        let base = Instant::now();
-        let mut correlator = Correlator::new(base);
-        let pass_event = sample_event(128, ACTION_XDP_PASS);
-        let kfree_event = sample_event(128, ACTION_KFREE_SKB);
+        let base_ns = 1_000_000_000;
+        let mut correlator = new_correlator();
+        let kfree_event_13 = sample_event(128, ACTION_KFREE_SKB, at_ms(base_ns, 13));
+        let kfree_event_15 = sample_event(128, ACTION_KFREE_SKB, at_ms(base_ns, 15));
+        let kfree_event_12 = sample_event(128, ACTION_KFREE_SKB, at_ms(base_ns, 12));
 
-        correlator.register_pass(pass_event, 1, at_ms(base, 10));
-        correlator.register_pass(pass_event, 2, at_ms(base, 10));
-        correlator.register_pass(pass_event, 3, at_ms(base, 14));
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 10)), 1);
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 10)), 2);
+        correlator.register_pass(sample_event(128, ACTION_XDP_PASS, at_ms(base_ns, 14)), 3);
 
         let first = correlator
-            .match_kfree(&kfree_event, at_ms(base, 13))
+            .match_kfree(&kfree_event_13)
             .expect("nearest event should match first");
         assert_eq!(first.counter, 3);
 
-        let tie_now = at_ms(base, 15);
         let second = correlator
-            .match_kfree(&kfree_event, tie_now)
+            .match_kfree(&kfree_event_15)
             .expect("tie should still produce a match");
         assert_eq!(second.counter, 1);
 
         let third = correlator
-            .match_kfree(&kfree_event, at_ms(base, 12))
+            .match_kfree(&kfree_event_12)
             .expect("remaining packet should match");
         assert_eq!(third.counter, 2);
         assert!(correlator.is_empty());

@@ -17,6 +17,8 @@ use serde::Deserialize;
 
 static STATUS_LOCK_WAIT_NS_TOTAL: AtomicU64 = AtomicU64::new(0);
 static STATUS_LOCK_WAIT_SAMPLES: AtomicU64 = AtomicU64::new(0);
+static STATUS_LOCK_HOLD_NS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static STATUS_LOCK_HOLD_SAMPLES: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,13 +96,22 @@ pub async fn get_capture_status(
     STATUS_LOCK_WAIT_NS_TOTAL.fetch_add(waited_ns, Ordering::Relaxed);
     STATUS_LOCK_WAIT_SAMPLES.fetch_add(1, Ordering::Relaxed);
 
+    let hold_started = Instant::now();
     let mut stats = capture.get_stats();
+    let is_capturing = capture.is_running();
+    let mode = capture.mode().to_string();
+    let held_ns = duration_as_u64_ns(hold_started.elapsed());
+    STATUS_LOCK_HOLD_NS_TOTAL.fetch_add(held_ns, Ordering::Relaxed);
+    STATUS_LOCK_HOLD_SAMPLES.fetch_add(1, Ordering::Relaxed);
+
     stats.status_lock_wait_ns = STATUS_LOCK_WAIT_NS_TOTAL.load(Ordering::Relaxed);
     stats.status_lock_wait_samples = STATUS_LOCK_WAIT_SAMPLES.load(Ordering::Relaxed);
+    stats.status_lock_hold_ns = STATUS_LOCK_HOLD_NS_TOTAL.load(Ordering::Relaxed);
+    stats.status_lock_hold_samples = STATUS_LOCK_HOLD_SAMPLES.load(Ordering::Relaxed);
     Ok(Json(CaptureStatusResponse {
-        is_capturing: capture.is_running(),
+        is_capturing,
         stats,
-        mode: capture.mode().to_string(),
+        mode,
     }))
 }
 
