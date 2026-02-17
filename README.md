@@ -45,27 +45,9 @@ sudo ./scrop-server
 
 Then open `http://127.0.0.1:3000` in your browser.
 
-If you do not want to use `sudo` every time:
-
-```bash
-sudo setcap 'cap_bpf,cap_net_admin,cap_perfmon+ep' ./scrop-server
-./scrop-server
-```
-
 ## Constraints
 
 - Linux (x86_64 for current release asset)
 - Kernel 5.8+ (BPF ring buffer, XDP/BTF support)
 - eBPF privileges are required (`CAP_BPF`, `CAP_NET_ADMIN`, `CAP_PERFMON`)
-
-## Perf Comparison Scripts
-
-Issue #2 performance scripts are intentionally generated under `/tmp` (not tracked in git).
-
-```bash
-mkdir -p /tmp/perf-compare-ringbuf
-# generate scripts under /tmp/perf-compare-ringbuf then run:
-bash /tmp/perf-compare-ringbuf/run_compare_ebpf.sh
-bash /tmp/perf-compare-ringbuf/run_compare_mock_dataset.sh
-node /tmp/perf-compare-ringbuf/summarize.mjs
-```
+- For reliable eBPF mode startup, run `scrop-server` with `sudo`.
