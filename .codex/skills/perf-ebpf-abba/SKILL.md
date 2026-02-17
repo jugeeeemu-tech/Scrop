@@ -26,6 +26,7 @@ Collect comparable before/after eBPF benchmark data with order bias mitigation.
 4. Execute ABBA per profile.
 - Run per-profile sequence: `before -> after -> after -> before`.
 - Keep the same load profile definitions for both variants.
+- Keep the same HTTP target semantics (same endpoint and same success/failure behavior).
 
 5. Validate output completeness.
 - Confirm all planned runs are present in results JSON.
@@ -45,8 +46,12 @@ Collect comparable before/after eBPF benchmark data with order bias mitigation.
 - Near-zero captured packets:
 - Verify NIC attach target, sink process, and load-generator destination.
 
+- `missing node runtime` from `/tmp` harness:
+- Set `NODE_BIN` explicitly (for example `~/.local/share/fnm/aliases/default/bin/node`).
+
 ## Guardrails
 
 - Do not mix different NIC selections between variants.
 - Keep duration and packet size fixed across all runs.
 - If one run crashes, rerun the full ABBA block for that profile.
+- If before/after HTTP responses differ (one 2xx, one 4xx), treat the run as non-comparable.

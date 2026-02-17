@@ -18,6 +18,13 @@ Turn raw benchmark output into fair, decision-ready metrics.
 
 `CPU%-sec` is the sum of `cpu.mean * durationSec` across runs.
 
+When `durationSec` is unavailable (for example `HTTP_MODE=requests` or `HTTP_MODE=none`),
+replace `CPU%-sec` with `cpu_time_sec = sum(userSec + sysSec)`.
+Use:
+
+- `efficiency_cpu_time = delivered / cpu_time_sec`
+- `cpu_time_cost_per_100k = (cpu_time_sec * 100000) / delivered`
+
 ## Workflow
 
 1. Load machine-readable results.
@@ -30,10 +37,12 @@ Turn raw benchmark output into fair, decision-ready metrics.
 3. Compute normalized metrics.
 - Report profile-level and overall tables.
 - Include relative ratios (`after / before`) for each metric.
+- In requests/none mode, report CPU-time normalized metrics instead of CPU%-sec metrics.
 
 4. Interpret correctly.
 - If `delivered` differs by orders of magnitude, raw CPU% alone is not meaningful.
 - Prefer `efficiency` and `cpu_cost_per_100k` for fairness.
+- If ratios are near 1.0, add paired CI before declaring win/loss.
 
 5. Add caveats.
 - `capture_rate > 100%` can happen from non-load background traffic.
@@ -46,6 +55,9 @@ Turn raw benchmark output into fair, decision-ready metrics.
 
 - `efficiency` unstable:
 - Increase repetitions and compare medians, not a single run.
+
+- requests-mode comparison is inconsistent:
+- Verify `attempted` parity and `http.mode` parity between variants.
 
 ## Guardrails
 
