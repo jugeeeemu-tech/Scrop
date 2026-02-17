@@ -1,6 +1,62 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.2.0] - 2026-02-17
+
+### 🚀 Features
+
+- *(capture)* Stream captured packets in batches
+- *(mock)* Add configurable mock traffic profiles
+- *(ws)* Switch web ws payloads to protobuf
+- *(stream)* Migrate packet wire format to schema v2
+- *(capture)* Migrate eBPF event transport to ring buffer
+
+### 🐛 Bug Fixes
+
+- *(server)* Load static assets from fs in debug
+
+### 💼 Other
+
+- *(main)* Integrate issue6 correlator into ringbuf branch
+
+### 📚 Documentation
+
+- *(agents)* Add codex agent guide
+- *(agents)* Remove duplicated codex policy blocks
+- *(skills)* Add perf measurement playbook
+- *(skills)* Add paired ci perf workflow
+- *(readme)* Prefer sudo for ebpf startup
+
+### ⚡ Performance
+
+- *(capture)* Switch packet id to session-counter format
+- *(replay)* Optimize mono replay queue
+- *(capture)* Switch to flow+size correlator
+- *(capture)* Add pipeline contention diagnostics
+- *(capture)* Use ktime_ns and add timeout stats
+- *(capture)* Add shadow transition diagnostics
+- *(capture)* Batch reader send and drop legacy
+
+### 📈 Benchmark (v0.1.1 -> v0.2.0)
+
+- eBPF randomized pair benchmark (8 pairs, requests mode, `LOAD=15000`, `HTTP_CONCURRENCY=64`) shows strong improvement in CPU-time-normalized efficiency.
+- `cpu_time_per_100k_delivered`: `148.16 -> 6.89` (after/before `0.0465`, `-95.35%`)
+- `delivered`: `26,310 -> 544,553` (`20.70x`)
+- paired CI (`cpu_time_per_100k`, overall capture): `minPair=3` CI95 `[0.0368, 0.0583]`, verdict `improved`
+- Note: delivered gain includes both ring buffer migration and correlator correctness fixes (Issue #6 lineage), not ring buffer alone.
+
+### 🎨 Styling
+
+- *(server)* Apply rustfmt in route tests
+
+### 🧪 Testing
+
+- *(stream)* Add batch ws and replay tests
+- *(perf)* Stabilize perf benchmark setup
+
+### ⚙️ Miscellaneous Tasks
+
+- *(codex)* Add local skill definitions
 ## [0.1.1] - 2026-02-14
 
 ### 🐛 Bug Fixes
@@ -22,6 +78,10 @@ All notable changes to this project will be documented in this file.
 
 - *(e2e)* Add port delete stream residue check
 - *(e2e)* Wait for firewall drop modal details
+
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Prepare v0.1.1
 ## [0.1.0] - 2026-02-13
 
 ### 🚀 Features
