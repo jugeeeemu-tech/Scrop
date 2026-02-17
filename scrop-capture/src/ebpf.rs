@@ -40,6 +40,7 @@ const CORRELATION_TIMEOUT_MS: u64 = 50;
 const SEARCH_BUCKET_RADIUS: u64 = 1;
 const WHEEL_SLOTS: usize = 64;
 const SHADOW_CORRELATOR_ENV: &str = "SCROP_SHADOW_CORRELATOR";
+const CORRELATION_BATCH_CHANNEL_CAPACITY: usize = 64;
 
 #[derive(Clone, Copy)]
 enum ResultClass {
@@ -60,8 +61,9 @@ impl ResultClass {
 
 #[derive(Default)]
 struct DiagCounters {
-    reader_send_wait_ns: AtomicU64,
-    reader_send_wait_samples: AtomicU64,
+    reader_send_wait_raw_ns: AtomicU64,
+    reader_send_wait_batch_count: AtomicU64,
+    reader_send_wait_event_count: AtomicU64,
     correlator_remove_scan_steps: AtomicU64,
     correlator_remove_calls: AtomicU64,
     correlator_timeout_drain_calls: AtomicU64,
@@ -84,8 +86,11 @@ struct DiagCounters {
 
 impl DiagCounters {
     fn reset(&self) {
-        self.reader_send_wait_ns.store(0, Ordering::Relaxed);
-        self.reader_send_wait_samples.store(0, Ordering::Relaxed);
+        self.reader_send_wait_raw_ns.store(0, Ordering::Relaxed);
+        self.reader_send_wait_batch_count
+            .store(0, Ordering::Relaxed);
+        self.reader_send_wait_event_count
+            .store(0, Ordering::Relaxed);
         self.correlator_remove_scan_steps
             .store(0, Ordering::Relaxed);
         self.correlator_remove_calls.store(0, Ordering::Relaxed);
@@ -120,8 +125,11 @@ impl DiagCounters {
     }
 
     fn write_into_stats(&self, stats: &mut CaptureStats) {
-        stats.reader_send_wait_ns = self.reader_send_wait_ns.load(Ordering::Relaxed);
-        stats.reader_send_wait_samples = self.reader_send_wait_samples.load(Ordering::Relaxed);
+        stats.reader_send_wait_raw_ns = self.reader_send_wait_raw_ns.load(Ordering::Relaxed);
+        stats.reader_send_wait_batch_count =
+            self.reader_send_wait_batch_count.load(Ordering::Relaxed);
+        stats.reader_send_wait_event_count =
+            self.reader_send_wait_event_count.load(Ordering::Relaxed);
         stats.correlator_remove_scan_steps =
             self.correlator_remove_scan_steps.load(Ordering::Relaxed);
         stats.correlator_remove_calls = self.correlator_remove_calls.load(Ordering::Relaxed);
@@ -841,7 +849,7 @@ async fn run_ebpf_capture(
         .map_err(|e: aya::maps::MapError| CaptureError::EbpfLoadFailed(e.to_string()))?;
 
     // イベント相関用チャネル
-    let (tx, mut rx) = mpsc::channel::<(PacketEvent, u64)>(4096);
+    let (tx, mut rx) = mpsc::channel::<Vec<(PacketEvent, u64)>>(CORRELATION_BATCH_CHANNEL_CAPACITY);
 
     // ring buffer リーダーを起動 → チャネルに送信
     let is_running_reader = Arc::clone(&is_running);
@@ -891,19 +899,26 @@ async fn run_ebpf_capture(
             }
             drop(guard);
 
-            for payload in drained {
-                let send_started = Instant::now();
-                if tx_reader.send(payload).await.is_err() {
-                    return;
-                }
-                diag_reader.reader_send_wait_ns.fetch_add(
-                    duration_as_u64_ns(send_started.elapsed()),
-                    Ordering::Relaxed,
-                );
-                diag_reader
-                    .reader_send_wait_samples
-                    .fetch_add(1, Ordering::Relaxed);
+            if drained.is_empty() {
+                continue;
             }
+
+            let batch_len = drained.len() as u64;
+            let send_started = Instant::now();
+            if tx_reader.send(drained).await.is_err() {
+                return;
+            }
+            let waited_ns = duration_as_u64_ns(send_started.elapsed());
+            // Batch-aware raw wait metrics.
+            diag_reader
+                .reader_send_wait_raw_ns
+                .fetch_add(waited_ns, Ordering::Relaxed);
+            diag_reader
+                .reader_send_wait_batch_count
+                .fetch_add(1, Ordering::Relaxed);
+            diag_reader
+                .reader_send_wait_event_count
+                .fetch_add(batch_len, Ordering::Relaxed);
         }
     });
 
@@ -946,54 +961,56 @@ async fn run_ebpf_capture(
             tokio::select! {
                 recv = rx.recv(), if !events_closed => {
                     match recv {
-                        Some((event, counter)) => {
-                            if event.action == ACTION_XDP_PASS {
-                                // XDP PASS → pending に格納
-                                correlator.register_pass(event, counter);
-                                if let Some(shadow) = shadow_correlator.as_mut() {
-                                    let now_mono_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)
-                                        .unwrap_or(event.ktime_ns);
-                                    shadow.register_pass_at(event, counter, now_mono_ns);
-                                }
-                            } else if event.action == ACTION_KFREE_SKB {
-                                // kfree_skb → pending から flow+size+time-bucket で相関
-                                let result = correlation_resolver.classify_drop(event.drop_reason);
-                                let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
-                                let result_class = ResultClass::from_packet_result(&result);
-
-                                if let Some(p) = correlator.match_kfree(&event) {
-                                    // XDP で見たパケットがドロップされた
-                                    let captured = convert_event(
-                                        &p.event,
-                                        &correlation_session_id,
-                                        p.counter,
-                                        result,
-                                        Some(reason),
-                                    );
-                                    update_stats(&correlation_stats, &captured.result);
-                                    out_batch.push(captured);
-                                    if let Some(tracker) = shadow_tracker.as_mut() {
-                                        tracker.observe_ktime(p.counter, result_class);
+                        Some(events) => {
+                            for (event, counter) in events {
+                                if event.action == ACTION_XDP_PASS {
+                                    // XDP PASS → pending に格納
+                                    correlator.register_pass(event, counter);
+                                    if let Some(shadow) = shadow_correlator.as_mut() {
+                                        let now_mono_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)
+                                            .unwrap_or(event.ktime_ns);
+                                        shadow.register_pass_at(event, counter, now_mono_ns);
                                     }
-                                    if out_batch.len() >= BATCH_MAX_SIZE {
-                                        flush_captured_batch(
-                                            &correlation_event_tx,
-                                            &mut out_batch,
-                                            offset_cache.current_offset_ms(),
+                                } else if event.action == ACTION_KFREE_SKB {
+                                    // kfree_skb → pending から flow+size+time-bucket で相関
+                                    let result = correlation_resolver.classify_drop(event.drop_reason);
+                                    let reason = correlation_resolver.drop_reason_string(event.drop_reason, &result);
+                                    let result_class = ResultClass::from_packet_result(&result);
+
+                                    if let Some(p) = correlator.match_kfree(&event) {
+                                        // XDP で見たパケットがドロップされた
+                                        let captured = convert_event(
+                                            &p.event,
+                                            &correlation_session_id,
+                                            p.counter,
+                                            result,
+                                            Some(reason),
                                         );
-                                    }
-                                }
-
-                                if let Some(shadow) = shadow_correlator.as_mut() {
-                                    let now_mono_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)
-                                        .unwrap_or(event.ktime_ns);
-                                    if let Some(p) = shadow.match_kfree_at(&event, now_mono_ns) {
+                                        update_stats(&correlation_stats, &captured.result);
+                                        out_batch.push(captured);
                                         if let Some(tracker) = shadow_tracker.as_mut() {
-                                            tracker.observe_legacy(p.counter, result_class);
+                                            tracker.observe_ktime(p.counter, result_class);
+                                        }
+                                        if out_batch.len() >= BATCH_MAX_SIZE {
+                                            flush_captured_batch(
+                                                &correlation_event_tx,
+                                                &mut out_batch,
+                                                offset_cache.current_offset_ms(),
+                                            );
                                         }
                                     }
+
+                                    if let Some(shadow) = shadow_correlator.as_mut() {
+                                        let now_mono_ns = clock_gettime_ns(libc::CLOCK_MONOTONIC)
+                                            .unwrap_or(event.ktime_ns);
+                                        if let Some(p) = shadow.match_kfree_at(&event, now_mono_ns) {
+                                            if let Some(tracker) = shadow_tracker.as_mut() {
+                                                tracker.observe_legacy(p.counter, result_class);
+                                            }
+                                        }
+                                    }
+                                    // pending にマッチしない kfree_skb イベントは破棄する
                                 }
-                                // pending にマッチしない kfree_skb イベントは破棄する
                             }
                         }
                         None => {
