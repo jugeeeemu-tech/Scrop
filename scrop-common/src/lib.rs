@@ -4,7 +4,7 @@
 pub const ACTION_XDP_PASS: u32 = 2;
 pub const ACTION_KFREE_SKB: u32 = 100;
 
-/// eBPFプログラムからユーザースペースへPerfEventArrayで送るパケット情報。
+/// eBPFプログラムからユーザースペースへ送るパケット情報。
 /// `#[repr(C)]`でメモリレイアウトを固定し、eBPF側とユーザースペース側で安全に共有する。
 #[repr(C)]
 #[derive(Clone, Copy)]

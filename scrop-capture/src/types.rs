@@ -133,6 +133,33 @@ pub struct CaptureStats {
     pub nic_dropped: u64,
     pub fw_dropped: u64,
     pub delivered: u64,
+    pub transport_dropped: u64,
+    // Raw reader->correlator channel wait metrics for batch-aware analysis.
+    pub reader_send_wait_raw_ns: u64,
+    pub reader_send_wait_batch_count: u64,
+    pub reader_send_wait_event_count: u64,
+    pub correlator_remove_scan_steps: u64,
+    pub correlator_remove_calls: u64,
+    pub correlator_timeout_drain_calls: u64,
+    pub correlator_timeout_expired_packets: u64,
+    pub correlator_timeout_expired_max_batch: u64,
+    pub shadow_compare_enabled: u64,
+    pub shadow_pairs_total: u64,
+    pub shadow_unmatched_legacy: u64,
+    pub shadow_unmatched_ktime: u64,
+    pub shadow_legacy_delivered_ktime_delivered: u64,
+    pub shadow_legacy_delivered_ktime_nic_drop: u64,
+    pub shadow_legacy_delivered_ktime_fw_drop: u64,
+    pub shadow_legacy_nic_drop_ktime_delivered: u64,
+    pub shadow_legacy_nic_drop_ktime_nic_drop: u64,
+    pub shadow_legacy_nic_drop_ktime_fw_drop: u64,
+    pub shadow_legacy_fw_drop_ktime_delivered: u64,
+    pub shadow_legacy_fw_drop_ktime_nic_drop: u64,
+    pub shadow_legacy_fw_drop_ktime_fw_drop: u64,
+    pub status_lock_wait_ns: u64,
+    pub status_lock_wait_samples: u64,
+    pub status_lock_hold_ns: u64,
+    pub status_lock_hold_samples: u64,
 }
 
 #[cfg(test)]
@@ -238,6 +265,32 @@ mod tests {
         assert_eq!(stats.nic_dropped, 0);
         assert_eq!(stats.fw_dropped, 0);
         assert_eq!(stats.delivered, 0);
+        assert_eq!(stats.transport_dropped, 0);
+        assert_eq!(stats.reader_send_wait_raw_ns, 0);
+        assert_eq!(stats.reader_send_wait_batch_count, 0);
+        assert_eq!(stats.reader_send_wait_event_count, 0);
+        assert_eq!(stats.correlator_remove_scan_steps, 0);
+        assert_eq!(stats.correlator_remove_calls, 0);
+        assert_eq!(stats.correlator_timeout_drain_calls, 0);
+        assert_eq!(stats.correlator_timeout_expired_packets, 0);
+        assert_eq!(stats.correlator_timeout_expired_max_batch, 0);
+        assert_eq!(stats.shadow_compare_enabled, 0);
+        assert_eq!(stats.shadow_pairs_total, 0);
+        assert_eq!(stats.shadow_unmatched_legacy, 0);
+        assert_eq!(stats.shadow_unmatched_ktime, 0);
+        assert_eq!(stats.shadow_legacy_delivered_ktime_delivered, 0);
+        assert_eq!(stats.shadow_legacy_delivered_ktime_nic_drop, 0);
+        assert_eq!(stats.shadow_legacy_delivered_ktime_fw_drop, 0);
+        assert_eq!(stats.shadow_legacy_nic_drop_ktime_delivered, 0);
+        assert_eq!(stats.shadow_legacy_nic_drop_ktime_nic_drop, 0);
+        assert_eq!(stats.shadow_legacy_nic_drop_ktime_fw_drop, 0);
+        assert_eq!(stats.shadow_legacy_fw_drop_ktime_delivered, 0);
+        assert_eq!(stats.shadow_legacy_fw_drop_ktime_nic_drop, 0);
+        assert_eq!(stats.shadow_legacy_fw_drop_ktime_fw_drop, 0);
+        assert_eq!(stats.status_lock_wait_ns, 0);
+        assert_eq!(stats.status_lock_wait_samples, 0);
+        assert_eq!(stats.status_lock_hold_ns, 0);
+        assert_eq!(stats.status_lock_hold_samples, 0);
     }
 
     #[test]

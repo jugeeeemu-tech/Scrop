@@ -13,6 +13,7 @@ Produce defensible performance conclusions with low noise and clear tradeoffs.
 
 - `$perf-ebpf-abba`: Root-required eBPF before/after benchmarking with ABBA ordering.
 - `$perf-normalized-metrics`: Fair comparison using normalized CPU and capture metrics.
+- `$perf-paired-ci`: Paired bootstrap CI decision (`improved/regressed/inconclusive`).
 - `$perf-normal-traffic`: Long-run validation on production-like traffic.
 - `$perf-microbench`: Fast synthetic microbench for algorithmic changes.
 - `$perf-issue-report`: Issue or PR comment template for final reporting.
@@ -26,10 +27,12 @@ Produce defensible performance conclusions with low noise and clear tradeoffs.
 2. Freeze variables before running.
 - Same host, kernel, NIC selection, binary profile, duration, and load shape.
 - Change only one variable per comparison (normally code version).
+- Keep HTTP target path and HTTP success/failure semantics identical between variants.
 
 3. Counter order bias.
 - Use `ABBA` or `BAAB`.
 - Run at least two repetitions per profile and variant.
+- For randomized pairs, evaluate `minPair=1` and `minPair=3`.
 
 4. Preserve raw artifacts.
 - Save logs and machine-readable outputs (for example `/tmp/*.json` and `/tmp/*.log`).
@@ -38,13 +41,21 @@ Produce defensible performance conclusions with low noise and clear tradeoffs.
 5. Normalize before concluding.
 - Do not rely on raw CPU% alone.
 - Always compute `capture_rate`, `drop_rate`, and a CPU-normalized throughput metric.
+- If `durationSec` is unavailable, switch from `CPU%-sec` to `userSec + sysSec`.
 
-6. Report with caveats.
+6. Decide significance with paired CI.
+- Use paired bootstrap CI on `after / before` ratios.
+- Report `improved`, `regressed`, or `inconclusive` by CI crossing rule.
+
+7. Report with caveats.
 - Include environment and privilege assumptions.
 - Explain anomalies such as `capture_rate > 100%` from background traffic.
+- On WSL, treat `perf` profiler absence as expected and rely on harness counters + CI.
 
 ## Guardrails
 
 - Never compare runs with different attach targets or traffic mixes.
 - Never conclude from a single run.
 - If privilege mode differs (root vs non-root), treat results as non-comparable.
+- Do not use `/api/capture/status` as load target when evaluating capture-path cost.
+- If `HTTP_MODE=none` yields tiny delivered counts, treat verdict as low-signal.

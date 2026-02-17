@@ -39,10 +39,16 @@ struct packet_event {
 // ---------------------------------------------------------------------------
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-    __uint(key_size, sizeof(__u32));
-    __uint(value_size, sizeof(__u32));
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, 16 * 1024 * 1024);
 } EVENTS SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} RINGBUF_DROPS SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -50,6 +56,17 @@ struct {
     __type(value, __u32);
     __uint(max_entries, 32);
 } MONITORED_IFS SEC(".maps");
+
+static __always_inline void emit_event(void *ctx, const struct packet_event *event)
+{
+    long rc = bpf_ringbuf_output(&EVENTS, event, sizeof(*event), 0);
+    if (rc < 0) {
+        __u32 key = 0;
+        __u64 *drops = bpf_map_lookup_elem(&RINGBUF_DROPS, &key);
+        if (drops)
+            __sync_fetch_and_add(drops, 1);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Packet header structs for XDP direct access
@@ -155,8 +172,7 @@ int scrop_xdp(struct xdp_md *ctx)
     event.drop_reason = 0;
     event.ktime_ns    = bpf_ktime_get_ns();
 
-    bpf_perf_event_output(ctx, &EVENTS, BPF_F_CURRENT_CPU,
-                          &event, sizeof(event));
+    emit_event(ctx, &event);
 
     return XDP_PASS;
 }
@@ -250,8 +266,7 @@ int scrop_kfree_skb(struct kfree_skb_ctx *ctx)
     event.drop_reason = reason;
     event.ktime_ns    = bpf_ktime_get_ns();
 
-    bpf_perf_event_output(ctx, &EVENTS, BPF_F_CURRENT_CPU,
-                          &event, sizeof(event));
+    emit_event(ctx, &event);
 
     return 0;
 }

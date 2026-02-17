@@ -297,6 +297,8 @@ mod tests {
 /// 権限不足の場合はエラーメッセージを返す。
 #[cfg(feature = "ebpf")]
 pub fn check_permissions() -> Result<(), String> {
+    ensure_ringbuf_kernel_support()?;
+
     let status = std::fs::read_to_string("/proc/self/status")
         .map_err(|e| format!("/proc/self/status の読み取りに失敗: {}", e))?;
 
@@ -339,4 +341,76 @@ pub fn check_permissions() -> Result<(), String> {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "<binary>".to_string()),
     ))
+}
+
+#[cfg(feature = "ebpf")]
+const MIN_RINGBUF_KERNEL_MAJOR: u32 = 5;
+#[cfg(feature = "ebpf")]
+const MIN_RINGBUF_KERNEL_MINOR: u32 = 8;
+
+#[cfg(feature = "ebpf")]
+fn ensure_ringbuf_kernel_support() -> Result<(), String> {
+    let release = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map_err(|e| format!("/proc/sys/kernel/osrelease の読み取りに失敗: {}", e))?;
+    let release = release.trim();
+    let (major, minor) = parse_kernel_major_minor(release).ok_or_else(|| {
+        format!(
+            "カーネルバージョンを解析できませんでした: {}\nLinux {}.{} 以降が必要です（BPF ring buffer）",
+            release, MIN_RINGBUF_KERNEL_MAJOR, MIN_RINGBUF_KERNEL_MINOR
+        )
+    })?;
+
+    if major > MIN_RINGBUF_KERNEL_MAJOR
+        || (major == MIN_RINGBUF_KERNEL_MAJOR && minor >= MIN_RINGBUF_KERNEL_MINOR)
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "カーネル {} は未対応です。Linux {}.{} 以降が必要です（BPF ring buffer）",
+        release, MIN_RINGBUF_KERNEL_MAJOR, MIN_RINGBUF_KERNEL_MINOR
+    ))
+}
+
+#[cfg(feature = "ebpf")]
+fn parse_kernel_major_minor(release: &str) -> Option<(u32, u32)> {
+    let mut parts = release.split('.');
+    let major = parts
+        .next()?
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse::<u32>()
+        .ok()?;
+    let minor = parts
+        .next()?
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse::<u32>()
+        .ok()?;
+    Some((major, minor))
+}
+
+#[cfg(all(test, feature = "ebpf"))]
+mod kernel_tests {
+    use super::parse_kernel_major_minor;
+
+    #[test]
+    fn parse_kernel_major_minor_accepts_standard_release() {
+        assert_eq!(parse_kernel_major_minor("6.8.9"), Some((6, 8)));
+    }
+
+    #[test]
+    fn parse_kernel_major_minor_accepts_suffix_release() {
+        assert_eq!(
+            parse_kernel_major_minor("5.15.167.4-microsoft-standard-WSL2"),
+            Some((5, 15))
+        );
+    }
+
+    #[test]
+    fn parse_kernel_major_minor_rejects_invalid_release() {
+        assert_eq!(parse_kernel_major_minor("invalid"), None);
+    }
 }

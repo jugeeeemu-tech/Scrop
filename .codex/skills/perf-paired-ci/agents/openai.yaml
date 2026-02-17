@@ -1,0 +1,4 @@
+interface:
+  display_name: "Paired CI Perf Judge"
+  short_description: "Judge before/after perf deltas with paired bootstrap CI."
+  default_prompt: "Use $perf-paired-ci to determine improved/regressed/inconclusive from before/after benchmark artifacts."

@@ -45,15 +45,9 @@ sudo ./scrop-server
 
 Then open `http://127.0.0.1:3000` in your browser.
 
-If you do not want to use `sudo` every time:
-
-```bash
-sudo setcap 'cap_bpf,cap_net_admin,cap_perfmon+ep' ./scrop-server
-./scrop-server
-```
-
 ## Constraints
 
 - Linux (x86_64 for current release asset)
-- Kernel 5.x+ (XDP/BTF support)
+- Kernel 5.8+ (BPF ring buffer, XDP/BTF support)
 - eBPF privileges are required (`CAP_BPF`, `CAP_NET_ADMIN`, `CAP_PERFMON`)
+- For reliable eBPF mode startup, run `scrop-server` with `sudo`.
