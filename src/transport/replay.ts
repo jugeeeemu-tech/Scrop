@@ -6,6 +6,9 @@ import type {
 
 const SAME_MOMENT_EPSILON_MS = 1e-6;
 const COMPACT_HEAD_THRESHOLD = 1024;
+const REPLAY_CATCHUP_ENTER_MS = 1_000;
+const REPLAY_CATCHUP_EXIT_MS = 200;
+const CATCHUP_CHUNK_SIZE = 256;
 
 export interface PacketReplayer {
   enqueue(batch: ReplayFrameBatch): void;
@@ -16,8 +19,21 @@ export function createPacketReplayer(onPacket: (packet: CapturedPacket) => void)
   const queue: ReplayFrame[] = [];
   let head = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let catchUpCancel: (() => void) | null = null;
   let disposed = false;
-  let lastMonoMs: number | null = null;
+  let catchUpMode = false;
+  let baseMonoMs: number | null = null;
+  let baseWallMs: number | null = null;
+
+  function nowMs(): number {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      const now = performance.now();
+      if (Number.isFinite(now)) {
+        return now;
+      }
+    }
+    return Date.now();
+  }
 
   function isQueueEmpty(): boolean {
     return head >= queue.length;
@@ -41,33 +57,132 @@ export function createPacketReplayer(onPacket: (packet: CapturedPacket) => void)
     }
   }
 
+  function clearCatchUpSchedule() {
+    if (catchUpCancel) {
+      catchUpCancel();
+      catchUpCancel = null;
+    }
+  }
+
+  function scheduleOnNextFrame(run: () => void): () => void {
+    if (
+      typeof requestAnimationFrame === 'function' &&
+      typeof cancelAnimationFrame === 'function'
+    ) {
+      const id = requestAnimationFrame(() => run());
+      return () => cancelAnimationFrame(id);
+    }
+    const id = setTimeout(run, 0);
+    return () => clearTimeout(id);
+  }
+
   function flushDue(targetMonoMs: number) {
     while (!isQueueEmpty()) {
       const frame = queue[head];
       if (frame.monoMs > targetMonoMs + SAME_MOMENT_EPSILON_MS) {
         break;
       }
-      head += 1;
-      onPacket(frame);
-      lastMonoMs = frame.monoMs;
+      emitCurrentFrame();
     }
     compactQueueIfNeeded();
   }
 
+  function emitCurrentFrame() {
+    const frame = queue[head];
+    head += 1;
+    onPacket(frame);
+  }
+
+  function ensureBaseClock(nextMonoMs: number) {
+    if (baseMonoMs === null || baseWallMs === null) {
+      baseMonoMs = nextMonoMs;
+      baseWallMs = nowMs();
+      return;
+    }
+
+    // Defensive: if monotonic source restarts and jumps backwards, re-anchor.
+    if (nextMonoMs + SAME_MOMENT_EPSILON_MS < baseMonoMs) {
+      baseMonoMs = nextMonoMs;
+      baseWallMs = nowMs();
+    }
+  }
+
+  function calculateTiming(nextMonoMs: number): {
+    expectedWallMs: number;
+    delayMsRaw: number;
+    lagMs: number;
+  } {
+    ensureBaseClock(nextMonoMs);
+    const expectedWallMs = baseWallMs! + (nextMonoMs - baseMonoMs!);
+    const delayMsRaw = expectedWallMs - nowMs();
+    const lagMs = -delayMsRaw;
+    return { expectedWallMs, delayMsRaw, lagMs };
+  }
+
+  function scheduleCatchUp() {
+    if (disposed || catchUpCancel) {
+      return;
+    }
+
+    catchUpCancel = scheduleOnNextFrame(() => {
+      catchUpCancel = null;
+      if (disposed) {
+        return;
+      }
+      flushCatchUpChunk();
+    });
+  }
+
+  function flushCatchUpChunk() {
+    let processed = 0;
+
+    while (!isQueueEmpty() && processed < CATCHUP_CHUNK_SIZE) {
+      const nextMonoMs = queue[head].monoMs;
+      const { lagMs } = calculateTiming(nextMonoMs);
+      if (lagMs <= REPLAY_CATCHUP_EXIT_MS) {
+        catchUpMode = false;
+        break;
+      }
+      emitCurrentFrame();
+      processed += 1;
+    }
+
+    compactQueueIfNeeded();
+
+    if (isQueueEmpty()) {
+      catchUpMode = false;
+      return;
+    }
+
+    if (catchUpMode) {
+      scheduleCatchUp();
+      return;
+    }
+
+    scheduleNext();
+  }
+
   function scheduleNext() {
-    if (disposed || timer) {
+    if (disposed || timer || catchUpCancel) {
+      return;
+    }
+
+    if (catchUpMode) {
+      scheduleCatchUp();
       return;
     }
 
     while (!isQueueEmpty()) {
       const nextMonoMs = queue[head].monoMs;
-      if (lastMonoMs === null) {
-        flushDue(nextMonoMs);
-        continue;
+      const { delayMsRaw, lagMs } = calculateTiming(nextMonoMs);
+
+      if (lagMs >= REPLAY_CATCHUP_ENTER_MS) {
+        catchUpMode = true;
+        scheduleCatchUp();
+        return;
       }
 
-      const deltaMs = nextMonoMs - lastMonoMs;
-      const delayMs = deltaMs > 0 ? Math.floor(deltaMs) : 0;
+      const delayMs = delayMsRaw > 0 ? Math.floor(delayMsRaw) : 0;
       if (delayMs <= 0) {
         flushDue(nextMonoMs);
         continue;
@@ -101,7 +216,11 @@ export function createPacketReplayer(onPacket: (packet: CapturedPacket) => void)
       disposed = true;
       queue.length = 0;
       head = 0;
+      catchUpMode = false;
+      baseMonoMs = null;
+      baseWallMs = null;
       clearTimer();
+      clearCatchUpSchedule();
     },
   };
 }

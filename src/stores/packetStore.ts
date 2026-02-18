@@ -55,6 +55,17 @@ export interface PacketStoreState {
 }
 
 type Listener = () => void;
+type PacketResult = 'delivered' | 'nic-drop' | 'fw-drop';
+
+const STALE_PACKET_MS = 1_500;
+const FAST_FORWARD_CHUNK_SIZE = 256;
+const FAST_FORWARD_COMPACT_HEAD_THRESHOLD = 1_024;
+
+interface FastForwardQueueEntry {
+  packet: AnimatingPacket;
+  result: PacketResult;
+  generation: number;
+}
 
 // Module-level state
 let store: PacketStoreState = createInitialStore(getPorts());
@@ -62,6 +73,9 @@ const listeners = new Set<Listener>();
 let packetUnsubscribe: (() => void) | null = null;
 let initialized = false;
 let storeGeneration = 0;
+let fastForwardQueue: FastForwardQueueEntry[] = [];
+let fastForwardHead = 0;
+let fastForwardFlushCancel: (() => void) | null = null;
 
 // Rate tracking for stream mode
 const recentDeliveredTimesPerPort: Record<number, number[]> = {};
@@ -120,6 +134,117 @@ function clearPendingDelivered() {
     deliveredFlushTimer = null;
   }
   pendingDelivered = {};
+}
+
+function scheduleOnNextFrame(run: () => void): () => void {
+  if (
+    typeof requestAnimationFrame === 'function' &&
+    typeof cancelAnimationFrame === 'function'
+  ) {
+    const id = requestAnimationFrame(() => run());
+    return () => cancelAnimationFrame(id);
+  }
+  const id = setTimeout(run, 0);
+  return () => clearTimeout(id);
+}
+
+function isFastForwardQueueEmpty(): boolean {
+  return fastForwardHead >= fastForwardQueue.length;
+}
+
+function compactFastForwardQueueIfNeeded() {
+  if (fastForwardHead === 0) return;
+  if (
+    fastForwardHead < FAST_FORWARD_COMPACT_HEAD_THRESHOLD &&
+    fastForwardHead * 2 < fastForwardQueue.length
+  ) {
+    return;
+  }
+  fastForwardQueue.splice(0, fastForwardHead);
+  fastForwardHead = 0;
+}
+
+function clearFastForwardQueue() {
+  if (fastForwardFlushCancel) {
+    fastForwardFlushCancel();
+    fastForwardFlushCancel = null;
+  }
+  fastForwardQueue = [];
+  fastForwardHead = 0;
+}
+
+function applyFastForwardPacket(rawPacket: AnimatingPacket, result: PacketResult) {
+  const packet = { ...rawPacket, targetPort: resolveTargetPort(rawPacket.destPort) };
+  if (result === 'delivered') {
+    const port = packet.targetPort ?? ETC_PORT_KEY;
+    store = {
+      ...store,
+      deliveredCounter: store.deliveredCounter + 1,
+      deliveredCounterPerPort: {
+        ...store.deliveredCounterPerPort,
+        [port]: (store.deliveredCounterPerPort[port] || 0) + 1,
+      },
+    };
+    appendDeliveredPacket(port, packet);
+    return;
+  }
+
+  if (result === 'nic-drop') {
+    store = {
+      ...store,
+      droppedCounter: store.droppedCounter + 1,
+      nicDroppedCounter: store.nicDroppedCounter + 1,
+      nicDropped: [...store.nicDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+    };
+    return;
+  }
+
+  store = {
+    ...store,
+    droppedCounter: store.droppedCounter + 1,
+    fwDroppedCounter: store.fwDroppedCounter + 1,
+    firewallDropped: [...store.firewallDropped.slice(-(MAX_STORED_DROPPED_PACKETS - 1)), packet],
+  };
+}
+
+function flushFastForwardQueue() {
+  fastForwardFlushCancel = null;
+  if (isFastForwardQueueEmpty()) return;
+
+  beginBatch();
+  try {
+    let processed = 0;
+    while (!isFastForwardQueueEmpty() && processed < FAST_FORWARD_CHUNK_SIZE) {
+      const entry = fastForwardQueue[fastForwardHead];
+      fastForwardHead += 1;
+      processed += 1;
+      if (entry.generation !== storeGeneration) continue;
+      applyFastForwardPacket(entry.packet, entry.result);
+    }
+    compactFastForwardQueueIfNeeded();
+  } finally {
+    endBatch();
+  }
+
+  if (!isFastForwardQueueEmpty()) {
+    scheduleFastForwardFlush();
+  }
+}
+
+function scheduleFastForwardFlush() {
+  if (fastForwardFlushCancel || isFastForwardQueueEmpty()) return;
+  fastForwardFlushCancel = scheduleOnNextFrame(() => {
+    flushFastForwardQueue();
+  });
+}
+
+function enqueueFastForwardPacket(packet: AnimatingPacket, result: PacketResult, generation: number) {
+  fastForwardQueue.push({ packet, result, generation });
+  scheduleFastForwardFlush();
+}
+
+function isStalePacket(packet: AnimatingPacket): boolean {
+  return Number.isFinite(packet.timestamp) && Date.now() - packet.timestamp >= STALE_PACKET_MS;
 }
 
 /**
@@ -244,8 +369,6 @@ function clearRateTimes() {
     rateWindowTimer = null;
   }
 }
-
-type PacketResult = 'delivered' | 'nic-drop' | 'fw-drop';
 
 /**
  * 定期的にレートをチェックし、exit閾値を下回ったらストリームモードを即座にOFFにする
@@ -433,6 +556,11 @@ function processFW(packet: AnimatingPacket, result: PacketResult, generation: nu
  * 各レイヤーが独立してストリーム判定を行い、ストリームなら即座に次の処理へ進む
  */
 function processPacket(rawPacket: AnimatingPacket, result: PacketResult) {
+  if (isStalePacket(rawPacket) || !isFastForwardQueueEmpty()) {
+    enqueueFastForwardPacket(rawPacket, result, storeGeneration);
+    return;
+  }
+
   const packet = { ...rawPacket, targetPort: resolveTargetPort(rawPacket.destPort) };
   const generation = storeGeneration;
 
@@ -528,6 +656,7 @@ export async function resetCapture(): Promise<void> {
     storeGeneration++;
     clearRateTimes();
     clearPendingDelivered();
+    clearFastForwardQueue();
     store = createInitialStore(getPorts());
     emitChange();
   
@@ -555,9 +684,12 @@ export function subscribeToPackets(isCapturing: boolean): void {
         processPacket(captured.packet, captured.result);
       });
     });
-  } else if (!isCapturing && packetUnsubscribe) {
-    packetUnsubscribe();
-    packetUnsubscribe = null;
+  } else if (!isCapturing) {
+    clearFastForwardQueue();
+    if (packetUnsubscribe) {
+      packetUnsubscribe();
+      packetUnsubscribe = null;
+    }
   }
 }
 
@@ -652,6 +784,7 @@ export function clearAll(): void {
   storeGeneration++;
   clearRateTimes();
   clearPendingDelivered();
+  clearFastForwardQueue();
   store = createInitialStore(getPorts());
   emitChange();
 

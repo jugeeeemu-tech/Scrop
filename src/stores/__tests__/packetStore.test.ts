@@ -80,6 +80,10 @@ async function initAndSubscribe(store: Awaited<ReturnType<typeof importFresh>>) 
   await vi.advanceTimersByTimeAsync(0);
 }
 
+async function advanceFrame() {
+  await vi.advanceTimersByTimeAsync(20);
+}
+
 /** コールバック経由でパケットを注入 */
 function injectPacket(packet: AnimatingPacket, result: CapturedPacket['result']) {
   if (!capturedOnPacket) throw new Error('subscribePackets callback not captured');
@@ -324,6 +328,61 @@ describe('packetStore', () => {
     });
   });
 
+  describe('stale packet fast-forward', () => {
+    it('stale delivered packets skip animations and update counters/history', async () => {
+      const store = await importFresh();
+      await initAndSubscribe(store);
+
+      injectPacket(
+        createPacket({ id: 'pkt-stale-1', destPort: 80, timestamp: Date.now() - 2_000 }),
+        'delivered'
+      );
+
+      expect(store.getSnapshot().incomingPackets).toHaveLength(0);
+      expect(store.getSnapshot().nicToFwPackets).toHaveLength(0);
+      expect(store.getSnapshot().fwToPortPackets).toHaveLength(0);
+      expect(store.getSnapshot().deliveredCounter).toBe(0);
+
+      await advanceFrame();
+      const stateAfter = store.getSnapshot();
+      expect(stateAfter.deliveredCounter).toBe(1);
+      expect(stateAfter.deliveredCounterPerPort[80]).toBe(1);
+      expect(stateAfter.incomingPackets).toHaveLength(0);
+      expect(stateAfter.nicToFwPackets).toHaveLength(0);
+      expect(stateAfter.fwToPortPackets).toHaveLength(0);
+      expect(stateAfter.nicDropAnimations).toHaveLength(0);
+      expect(stateAfter.fwDropAnimations).toHaveLength(0);
+
+      vi.advanceTimersByTime(500);
+      expect(store.getSnapshot().deliveredPackets[80].some((p) => p.id === 'pkt-stale-1')).toBe(true);
+    });
+
+    it('processes stale backlog in chunks without dropping packets', async () => {
+      const store = await importFresh();
+      await initAndSubscribe(store);
+
+      const total = 600;
+      const oldTimestamp = Date.now() - 5_000;
+      for (let i = 0; i < total; i++) {
+        injectPacket(
+          createPacket({ id: `pkt-stale-batch-${i}`, destPort: 80, timestamp: oldTimestamp }),
+          'delivered'
+        );
+      }
+
+      expect(store.getSnapshot().deliveredCounter).toBe(0);
+
+      await advanceFrame();
+      expect(store.getSnapshot().deliveredCounter).toBe(256);
+
+      await advanceFrame();
+      expect(store.getSnapshot().deliveredCounter).toBe(512);
+
+      await advanceFrame();
+      expect(store.getSnapshot().deliveredCounter).toBe(total);
+    });
+  });
+
   // ==========================================
   // 格納上限
   // ==========================================
@@ -439,6 +498,21 @@ describe('packetStore', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(store.getSnapshot().error).toBeTruthy();
     });
+
+    it('resetCapture clears pending stale fast-forward queue', async () => {
+      const store = await importFresh();
+      await initAndSubscribe(store);
+
+      injectPacket(
+        createPacket({ id: 'pkt-stale-reset', destPort: 80, timestamp: Date.now() - 2_000 }),
+        'delivered'
+      );
+
+      await store.resetCapture();
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(store.getSnapshot().deliveredCounter).toBe(0);
+    });
   });
 
   // ==========================================
@@ -484,6 +558,21 @@ describe('packetStore', () => {
       vi.advanceTimersByTime(LAYER_TRANSITION_DURATION * 3);
       expect(store.getSnapshot().deliveredCounter).toBe(0);
     });
+
+    it('clearAll clears pending stale fast-forward queue', async () => {
+      const store = await importFresh();
+      await initAndSubscribe(store);
+
+      injectPacket(
+        createPacket({ id: 'pkt-stale-clear', destPort: 80, timestamp: Date.now() - 2_000 }),
+        'delivered'
+      );
+      store.clearAll();
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(store.getSnapshot().deliveredCounter).toBe(0);
+      expect(store.getSnapshot().incomingPackets).toEqual([]);
+    });
   });
 
   describe('syncPortConfig', () => {
@@ -521,6 +610,20 @@ describe('packetStore', () => {
       store.subscribeToPackets(false);
       // unsubscribe が呼ばれ、コールバックがnullに
       expect(capturedOnPacket).toBeNull();
+    });
+
+    it('isCapturing=false clears pending stale fast-forward queue', async () => {
+      const store = await importFresh();
+      await initAndSubscribe(store);
+
+      injectPacket(
+        createPacket({ id: 'pkt-stale-stop', destPort: 80, timestamp: Date.now() - 2_000 }),
+        'delivered'
+      );
+      store.subscribeToPackets(false);
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(store.getSnapshot().deliveredCounter).toBe(0);
     });
   });
 
