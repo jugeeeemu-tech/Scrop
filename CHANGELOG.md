@@ -1,6 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.2.1] - 2026-02-18
+
+### 🐛 Bug Fixes
+
+- *(frontend)* Catch up stale replay backlog
 ## [0.2.0] - 2026-02-17
 
 ### 🚀 Features
@@ -37,14 +42,6 @@ All notable changes to this project will be documented in this file.
 - *(capture)* Add shadow transition diagnostics
 - *(capture)* Batch reader send and drop legacy
 
-### 📈 Benchmark (v0.1.1 -> v0.2.0)
-
-- eBPF randomized pair benchmark (8 pairs, requests mode, `LOAD=15000`, `HTTP_CONCURRENCY=64`) shows strong improvement in CPU-time-normalized efficiency.
-- `cpu_time_per_100k_delivered`: `148.16 -> 6.89` (after/before `0.0465`, `-95.35%`)
-- `delivered`: `26,310 -> 544,553` (`20.70x`)
-- paired CI (`cpu_time_per_100k`, overall capture): `minPair=3` CI95 `[0.0368, 0.0583]`, verdict `improved`
-- Note: delivered gain includes both ring buffer migration and correlator correctness fixes (Issue #6 lineage), not ring buffer alone.
-
 ### 🎨 Styling
 
 - *(server)* Apply rustfmt in route tests
@@ -57,6 +54,7 @@ All notable changes to this project will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - *(codex)* Add local skill definitions
+- *(release)* Prepare v0.2.0
 ## [0.1.1] - 2026-02-14
 
 ### 🐛 Bug Fixes
